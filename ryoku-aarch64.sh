@@ -89,6 +89,10 @@ pkgs=(
   # shells + apps the default binds expect
   zsh zsh-autosuggestions zsh-history-substring-search zsh-syntax-highlighting
   fish kitty nautilus nautilus-python fuzzel plymouth
+  # terminal tools Ryoku's fish/bash/zsh configs use (from base.packages);
+  # ryoku-fastfetch runs at every login and errors without fastfetch
+  fastfetch starship zoxide fzf fd eza bat btop neovim ripgrep lazygit yazi
+  bash-completion
 )
 
 say "refreshing package databases"
