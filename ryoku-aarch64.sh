@@ -162,6 +162,10 @@ if ((fish)); then
   cur=$(getent passwd "$USER" | cut -d: -f7)
   if [[ $cur == */fish ]]; then
     say "fish is already your login shell"
+  elif ((!dry)) && ! grep -qxF /usr/bin/fish /etc/shells; then
+    # never point the login shell at a binary that is not installed/registered:
+    # that locks you out of the next login.
+    warn "fish is not installed (or not in /etc/shells); keeping $cur"
   else
     say "switching your login shell to fish (was $cur)"
     run sudo usermod -s /usr/bin/fish "$USER"
