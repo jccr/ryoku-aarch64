@@ -121,5 +121,6 @@ or one Ryoku already owns; seeds are copied only when absent.
 It also enables Ryoku's session units. `ryoku-session.target` only starts units
 that are enabled with `WantedBy=ryoku-session.target` (ryoku-shell, ryogami,
 ryoku-idle, ryoku-clamshell); deploy.sh lays them but never enables them, so on
-a checkout box the wallpaper daemon never ran (and `Mod+W`, the wallpaper
-picker, did nothing), and idle lock and lid handling were off.
+a checkout box they only ran when something started them by name (the power
+helper restarts ryoku-shell and ryogami; ryoku-idle and ryoku-clamshell had no
+such path, so idle lock and lid handling were off).

@@ -177,8 +177,9 @@ lay_owned() { # src dst: copy if absent, or if unchanged since we last laid it
 # unit with WantedBy=ryoku-session.target (ryoku-shell, ryogami the wallpaper
 # daemon, ryoku-idle, ryoku-clamshell) must be ENABLED for the target to start
 # it. deploy.sh lays the unit files but never enables them (the package and
-# `ryoku doctor` do), so on a checkout box ryogami never ran: no wallpaper
-# daemon, and Mod+W (`ryogami wallpaper ui`) silently did nothing.
+# `ryoku doctor` do). On a checkout box ryoku-shell and ryogami still ran (a
+# power helper restarts them by name), but ryoku-idle and ryoku-clamshell
+# didn't: no idle lock, no lid policy.
 enable_session_units() {
   local udir=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user u units=() off=()
   [[ -d $udir ]] || return 0
