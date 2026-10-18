@@ -15,6 +15,8 @@
 #                                 quick settings, re-applied after each deploy)
 #   ryoku-arm apps [--install]    Ryoku's preinstalled apps (base + dev lists)
 #                                 that your repos carry, minus kernel/boot
+#   ryoku-arm seed                lay the configs/seeds a checkout install misses
+#                                 (LazyVim, Starship, Yazi, wallpapers, ...)
 #   ryoku-arm asahi-fixes         apply upstream Asahi fixes not yet released
 #                                 (asahi-audio: mic MONO position, ab1b469)
 #   ryoku-arm snapshots           snapper snapshots of /
@@ -142,6 +144,67 @@ cmd_apps() {
   else
     echo "  install with: ryoku-arm apps --install"
   fi
+}
+
+# What a packaged Ryoku box gets that a checkout's deploy.sh never lays: the
+# ryoku-desktop PKGBUILD stages nvim (LazyVim), starship.toml and yazi.toml for
+# `ryoku materialize`, and ryoku-shell-installer seeds wallpapers, ~/.npmrc and
+# a few .desktop entries. Ryoku-owned files are refreshed only while they still
+# match what this tool laid last time (a sha in the state dir), so a file you
+# edited is never clobbered; seeds are copied only when absent.
+seed_state="${XDG_STATE_HOME:-$HOME/.local/state}/ryoku-aarch64/seeded"
+
+lay_owned() { # src dst: copy if absent, or if unchanged since we last laid it
+  local src=$1 dst=$2 rec cur new
+  [[ -f $src ]] || return 0
+  rec="$seed_state/${dst#"$HOME"/}.sha"
+  new=$(sha256sum < "$src" | cut -d' ' -f1)
+  if [[ -e $dst ]]; then
+    cur=$(sha256sum < "$dst" | cut -d' ' -f1)
+    [[ $cur == "$new" ]] && { mkdir -p "${rec%/*}"; echo "$new" > "$rec"; return 0; }
+    if [[ ! -f $rec || $(cat "$rec") != "$cur" ]]; then
+      warn "kept your edited ${dst/#"$HOME"/\~} (Ryoku's version: $src)"
+      return 0
+    fi
+  fi
+  mkdir -p "${dst%/*}" "${rec%/*}"
+  cp -f "$src" "$dst"; echo "$new" > "$rec"
+  seeded_n=$((seeded_n + 1))
+}
+
+cmd_seed() {
+  need_repo
+  local r=$repo/ryoku cfg=${XDG_CONFIG_HOME:-$HOME/.config} f rel
+  local apps=${XDG_DATA_HOME:-$HOME/.local/share}/applications
+  seeded_n=0
+  # LazyVim: only into an empty ~/.config/nvim or one Ryoku already owns
+  # (.ryoku-lazyvim marker); never over someone else's Neovim config.
+  local nvim_entries=()
+  [[ -d $cfg/nvim ]] && mapfile -t nvim_entries < <(find "$cfg/nvim" -mindepth 1 -maxdepth 1)
+  if [[ ! -e $cfg/nvim || -f $cfg/nvim/.ryoku-lazyvim || ${#nvim_entries[@]} -eq 0 ]]; then
+    lay_owned "$r/apps/nvim/init.lua" "$cfg/nvim/init.lua"
+    lay_owned "$r/apps/nvim/.ryoku-lazyvim" "$cfg/nvim/.ryoku-lazyvim"
+    while IFS= read -r -d '' f; do
+      rel=${f#"$r/apps/nvim/"}; lay_owned "$f" "$cfg/nvim/$rel"
+    done < <(find "$r/apps/nvim/lua" -type f -print0)
+  else
+    warn "$cfg/nvim is your own Neovim config; skipped Ryoku's LazyVim"
+  fi
+  lay_owned "$r/apps/starship/starship.toml" "$cfg/starship.toml"
+  lay_owned "$r/apps/yazi/yazi.toml" "$cfg/yazi/yazi.toml"
+  # launcher entries the package ships system-wide
+  lay_owned "$r/apps/nvim/ryoku-nvim.desktop" "$apps/ryoku-nvim.desktop"
+  lay_owned "$r/apps/tools/compress-video.desktop" "$apps/compress-video.desktop"
+  lay_owned "$r/apps/tools/install-app.desktop" "$apps/install-app.desktop"
+  # installer seeds: only when absent
+  [[ -e $HOME/.npmrc ]] || { cp "$r/apps/npm/npmrc" "$HOME/.npmrc" && seeded_n=$((seeded_n + 1)); }
+  local wp=${XDG_PICTURES_DIR:-$HOME/Pictures}/Wallpapers
+  if [[ ! -d $wp ]] || [[ -z $(ls -A "$wp" 2>/dev/null) ]]; then
+    mkdir -p "$wp"; cp -a "$r/assets/wallpapers/." "$wp/" && seeded_n=$((seeded_n + 1))
+    say "seeded Ryoku's wallpapers -> ${wp/#"$HOME"/\~}"
+  fi
+  command -v update-desktop-database >/dev/null && update-desktop-database -q "$apps" 2>/dev/null || true
+  if ((seeded_n)); then say "laid $seeded_n Ryoku config file(s)/seed(s) a checkout deploy misses"; else say "Ryoku configs and seeds are current"; fi
 }
 
 cmd_deps() {
@@ -327,8 +390,10 @@ cmd_update() {
   # post-snapshot. RYOKU_WM pins the provider when run outside a session.
   local rc=0
   RYOKU_WM=${RYOKU_WM:-hyprland} ryoku update "$@" || rc=$?
-  # the deploy re-laid the shell: put the keyboard row (and plugin) back
+  # the deploy re-laid the shell: put the keyboard row (and plugin) back, and
+  # lay the configs a checkout deploy never does (LazyVim, starship, yazi, ...)
   cmd_plugins
+  cmd_seed
   return "$rc"
 }
 
@@ -371,10 +436,11 @@ case ${1:-} in
   plugins)     cmd_plugins ;;
   asahi-fixes) cmd_asahi_fixes ;;
   apps)        shift; cmd_apps "$@" ;;
+  seed)        cmd_seed ;;
   snapshots)   snapper -c root list ;;
   rollback)    shift; exec "$home_share/snapshot-rollback.sh" "$@" ;;
   self-update) cmd_self_update ;;
   reinstall)   shift; exec "$home_share/ryoku-aarch64.sh" "$@" ;;
-  ""|-h|--help|help) sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//' ;;
+  ""|-h|--help|help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command: $1 (try ryoku-arm help)" ;;
 esac

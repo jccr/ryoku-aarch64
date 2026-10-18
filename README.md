@@ -46,6 +46,7 @@ ryoku-arm deps              # what Ryoku's PKGBUILDs want that you're missing
 ryoku-arm status            # `ryoku status` + aarch64 checks (login type, packages)
 ryoku-arm plugins           # install/upgrade the bundled shell plugins that apply here
 ryoku-arm apps [--install]  # Ryoku's preinstalled apps your repos carry (Chromium, Firefox, ...)
+ryoku-arm seed              # LazyVim, Starship, Yazi, wallpapers: what a checkout deploy misses
 ryoku-arm asahi-fixes       # upstream Asahi fixes not yet released (see below)
 ryoku-arm snapshots         # snapper snapshots of /
 ryoku-arm rollback 3        # preview making snapshot 3 the root; add --apply to do it
@@ -105,3 +106,14 @@ managers would change how the machine gets online). `hardware.packages` (x86
 GPU drivers) and `aur.packages` (mostly x86 `-bin` builds) are skipped; anything
 listed but missing from your repos is reported, not forced. `--no-apps` skips
 the step. Docker and other services are installed, not enabled.
+
+## Configs a checkout deploy misses
+
+Ryoku's `deploy.sh` (the checkout path) doesn't lay everything a packaged install
+gets: the `ryoku-desktop` package stages Neovim's LazyVim config, `starship.toml`
+and `yazi.toml` for `ryoku materialize`, and Ryoku's shell installer seeds the
+wallpapers, `~/.npmrc` and a few launcher entries. `ryoku-arm seed` (run by the
+installer and after every `ryoku-arm update`) lays them from the checkout.
+Ryoku-owned files are refreshed only while they still match what was laid last
+time, so your edits are kept; LazyVim goes only into an empty `~/.config/nvim`
+or one Ryoku already owns; seeds are copied only when absent.

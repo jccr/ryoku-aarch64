@@ -378,6 +378,9 @@ say "installed ryoku-arm (update with: ryoku-arm update)"
 if ((kbd_plugin && is_asahi)); then
   run "$share/ryoku-arm" plugins || warn "plugin install failed (retry: ryoku-arm plugins)"
 fi
+# configs and seeds a packaged box gets but a checkout deploy never lays
+# (LazyVim, starship, yazi, wallpapers, .desktop entries)
+run env RYOKU_REPO="$dir" "$share/ryoku-arm" seed || warn "seeding failed (retry: ryoku-arm seed)"
 # Ryoku's preinstalled apps, read from its system/packages lists (minus the
 # kernel, boot chain and network managers; see ryoku-arm)
 if ((apps)); then
