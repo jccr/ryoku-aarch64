@@ -90,7 +90,7 @@ pkgbuild_field() { # pkg field...
 
 wanted_deps() {
   local own
-  own=$(git -C "$repo" ls-tree --name-only "origin/$channel:release/packages/" 2>/dev/null)
+  own=$(git -C "$repo" ls-tree --name-only "origin/$channel:release/packages/" 2>/dev/null) || own=""
   for p in "${desktop_pkgs[@]}"; do pkgbuild_field "$p" depends makedepends; done \
     | sed 's/[<>=].*//' | grep . | sort -u \
     | grep -vxF -f <(printf '%s\n' "$own") | grep -vE "$skip_re" || true
@@ -128,23 +128,21 @@ cmd_apps() {
     else unavailable+=("$a"); fi
   done
   ((${#unavailable[@]})) && warn "in Ryoku's lists but not in your repos (skipped): ${unavailable[*]}"
-  if ((${#tobuild[@]})); then
-    if ((install)); then
-      for a in "${tobuild[@]}"; do build_any "$a"; done
-    else
-      say "built from Ryoku's PKGBUILDs (arch=any): ${tobuild[*]}"
-    fi
-  fi
-  if ((${#missing[@]} == 0)); then
+  ((${#tobuild[@]})) && say "built from Ryoku's PKGBUILDs (arch=any): ${tobuild[*]}"
+  if ((${#missing[@]} + ${#tobuild[@]} == 0)); then
     say "all ${#want[@]} applicable Ryoku apps are installed"
     return 0
   fi
-  say "Ryoku apps not installed yet (${#missing[@]}): ${missing[*]}"
-  if ((install)); then
-    sudo pacman -S --needed --noconfirm "${missing[@]}"
-  else
+  ((${#missing[@]})) && say "Ryoku apps not installed yet (${#missing[@]}): ${missing[*]}"
+  if ((!install)); then
     echo "  install with: ryoku-arm apps --install"
+    return 0
   fi
+  # repo apps first: a failed source build must never block Chromium & co.
+  if ((${#missing[@]})); then
+    sudo pacman -S --needed --noconfirm "${missing[@]}" || warn "pacman could not install some apps (see above)"
+  fi
+  for a in "${tobuild[@]}"; do build_any "$a" || warn "$a did not build"; done
 }
 
 # What a packaged Ryoku box gets that a checkout's deploy.sh never lays: the
@@ -266,7 +264,9 @@ cmd_deps() {
 build_any() {
   local p=$1 want have work log
   want="$(pkgbuild_field "$p" pkgver | head -1)-$(pkgbuild_field "$p" pkgrel | head -1)"
-  have=$(pacman -Q "$p" 2>/dev/null | awk '{print $2}' | sed 's/^[0-9]*://')
+  # pacman -Q fails for a package not installed yet; under pipefail + set -e
+  # that silently killed the whole run (ryoku-arm apps --install, 2026-10-18)
+  have=$(pacman -Q "$p" 2>/dev/null | awk '{print $2}' | sed 's/^[0-9]*://') || have=""
   [[ $have == "$want" ]] && return 0
   say "building $p $want${have:+ (installed $have)}"
   work="$HOME/.cache/ryoku-aarch64/pkgs"; log="$work/$p.log"
@@ -294,7 +294,7 @@ is_apple() { grep -qa apple /proc/device-tree/compatible 2>/dev/null; }
 install_plugin() { # id
   local id=$1 dir="$home_share/plugins/$1" want have
   [[ -f $dir/manifest.json ]] || { warn "$id: not in $home_share (run ryoku-arm self-update)"; return 0; }
-  want=$(jq -r .version "$dir/manifest.json")
+  want=$(jq -r .version "$dir/manifest.json") || { warn "$id: unreadable manifest"; return 0; }
   have=$(ryoku plugin list --json 2>/dev/null | jq -r --arg id "$id" '.[]? | select(.id == $id) | .version' || true)
   if [[ $have == "$want" ]]; then
     return 0
