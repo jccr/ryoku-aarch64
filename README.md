@@ -12,3 +12,12 @@ chmod +x ryoku-aarch64.sh
 
 Update later with `git -C ~/src/ryoku pull && ~/src/ryoku/ryoku/shell/deploy.sh`.
 Don't use `ryoku update`; it pulls from the x86_64 repo.
+
+## Snapshots first (optional, btrfs root)
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/jccr/ryoku-aarch64/main/snapshots-setup.sh
+chmod +x snapshots-setup.sh
+./snapshots-setup.sh           # report + plan, changes nothing
+./snapshots-setup.sh --apply   # snapper + snap-pac (+ grub-btrfs if GRUB boots you)
+```
