@@ -151,6 +151,11 @@ mode=--no-reload
 # none" and skips the Hyprland pass. RYOKU_WM is the override its detector
 # checks first (ryoku/wm/detect.go).
 export RYOKU_WM=${RYOKU_WM:-hyprland}
+# Ryoku's tools call each other by bare name (ryoku-hub -> ryoku-wm-hyprland),
+# so ~/.local/bin must be on PATH during the deploy itself, not just afterwards;
+# otherwise the provider probe fails and plugin builds report "does not support
+# this action: plugins".
+[[ ":$PATH:" == *":$HOME/.local/bin:"* ]] || export PATH="$HOME/.local/bin:$PATH"
 # upstream deploy.sh copies config.fish without creating the dir first; on an
 # account where fish never ran that aborts the deploy.
 run mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/fish"
