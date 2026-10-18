@@ -228,10 +228,9 @@ cmd_plugins() {
   # still expose the LED; a native slider on the bar and in quick settings.
   if is_apple && compgen -G '/sys/class/leds/*kbd_backlight*' >/dev/null; then
     install_plugin keyboard-backlight
-    # The first (separate-file) row blanked quick settings: Quickshell did not
-    # register the new file as a type. The row is now inline; it stays opt-in
-    # (RYOKU_ARM_QS_ROW=1) until confirmed on a real shell.
-    if [[ ${RYOKU_ARM_QS_ROW:-0} == 1 ]]; then
+    # Inline quick-settings row (confirmed on a real shell 2026-10-18);
+    # RYOKU_ARM_QS_ROW=0 opts out and removes it.
+    if [[ ${RYOKU_ARM_QS_ROW:-1} == 1 ]]; then
       if apply_quick_settings; then restart_shell_if_live; fi
     else
       remove_quick_settings_row

@@ -65,12 +65,13 @@ it to Control Center), and Ryoku's sidebar only has screen brightness.
 It also adds a keyboard-backlight row to Ryoku's quick settings ("Sound &
 display", under screen brightness), built from Ryoku's own slider row: drag to
 set, tap the icon to toggle off / back on. Plugins can't extend quick settings,
-so `ryoku-arm` drops `quickshell/KbdBacklightSlider.qml` beside Ryoku's
-`QuickSettingsHome.qml` and inserts one line after the brightness control. The
-deploy re-lays the shell on every update, so `ryoku-arm update` re-applies it
-(run `ryoku-arm plugins` after a bare `ryoku update` or `deploy.sh`). If Ryoku
-ever moves the brightness control, the row is skipped with a warning rather than
-breaking the sidebar.
+so `ryoku-arm` inserts the row inline into the deployed `QuickSettingsHome.qml`
+after the brightness control (a separate `.qml` file doesn't work: Quickshell
+doesn't register new files as types of that folder). The deploy re-lays the
+shell on every update, so `ryoku-arm update` re-applies it (run `ryoku-arm
+plugins` after a bare `ryoku update` or `deploy.sh`). If Ryoku ever moves the
+brightness control, the row is skipped with a warning rather than breaking the
+sidebar. `RYOKU_ARM_QS_ROW=0 ryoku-arm plugins` removes it.
 
 On an Apple laptop with a `kbd_backlight` LED, the installer adds both
 (`--no-kbd-plugin` skips), and `ryoku-arm update` upgrades it. It passes `ryoku
