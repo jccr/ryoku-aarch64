@@ -23,6 +23,9 @@
 #   --locale L  UTF-8 locale to generate and set when the system has none
 #               (default en_US.UTF-8; e.g. en_CA.UTF-8). An existing UTF-8
 #               LANG in /etc/locale.conf is left alone.
+#   --tty-font F  console font for the text TTY when none is set (default
+#               ter-v32n, sized for Retina panels; ter-v24n is smaller;
+#               "none" skips). An existing FONT= in /etc/vconsole.conf wins.
 # Update later:  cd ~/src/ryoku && git pull && ryoku/shell/deploy.sh
 # (do NOT use `ryoku update` — it pulls from the x86_64 repo)
 set -euo pipefail
@@ -32,6 +35,7 @@ dir="$HOME/src/ryoku"
 dry=0
 fish=1
 lang=en_US.UTF-8
+ttyfont=ter-v32n
 while [[ $# -gt 0 ]]; do
   case $1 in
     --ref) ref=$2; shift 2 ;;
@@ -39,6 +43,7 @@ while [[ $# -gt 0 ]]; do
     --dry-run) dry=1; shift ;;
     --no-fish) fish=0; shift ;;
     --locale) lang=$2; shift 2 ;;
+    --tty-font) ttyfont=$2; shift 2 ;;
     --fish) fish=1; shift ;;   # accepted for compatibility; already the default
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -93,6 +98,8 @@ pkgs=(
   # ryoku-fastfetch runs at every login and errors without fastfetch
   fastfetch starship zoxide fzf fd eza bat btop neovim ripgrep lazygit yazi
   bash-completion
+  # readable Unicode console font for the TTY (box drawing, prompt arrows)
+  terminus-font
 )
 
 say "refreshing package databases"
@@ -217,6 +224,21 @@ else
     run sudo bash -c "printf 'LANG=%s\\n' '$lang' > /etc/locale.conf"
   fi
   warn "log out and back in for the new locale to apply"
+fi
+
+# ---------------------------------------------------------------- tty font
+# The default kernel console font is tiny on a Retina panel and lacks the
+# box-drawing glyphs Ryoku's fastfetch greeting and prompt use.
+if [[ $ttyfont != none ]]; then
+  if grep -qE '^[[:space:]]*FONT=' /etc/vconsole.conf 2>/dev/null; then
+    say "console font already set ($(sed -n 's/^[[:space:]]*FONT=//p' /etc/vconsole.conf))"
+  elif [[ ! -e /usr/share/kbd/consolefonts/$ttyfont.psf.gz ]] && ((!dry)); then
+    warn "console font $ttyfont not found under /usr/share/kbd/consolefonts; skipped"
+  else
+    say "setting the TTY font to $ttyfont"
+    run sudo bash -c "printf 'FONT=%s\\n' '$ttyfont' >> /etc/vconsole.conf"
+    run sudo systemctl restart systemd-vconsole-setup.service || true
+  fi
 fi
 
 say "done. Log into a Hyprland session (TTY or a display manager)."

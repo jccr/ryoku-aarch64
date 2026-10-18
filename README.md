@@ -7,7 +7,7 @@ Arch (Asahi ALARM) box by building it from source. Upstream ships x86_64 only.
 curl -fsSLO https://raw.githubusercontent.com/jccr/ryoku-aarch64/main/ryoku-aarch64.sh
 chmod +x ryoku-aarch64.sh
 ./ryoku-aarch64.sh --dry-run   # preview
-./ryoku-aarch64.sh          # also sets fish as login shell (--no-fish) and a UTF-8 locale if none (--locale en_CA.UTF-8)
+./ryoku-aarch64.sh          # also sets fish as login shell (--no-fish) and a UTF-8 locale if none (--locale en_CA.UTF-8) and a readable TTY font if none (--tty-font ter-v24n / none)
 ```
 
 Update later with `git -C ~/src/ryoku pull && ~/src/ryoku/ryoku/shell/deploy.sh`.
