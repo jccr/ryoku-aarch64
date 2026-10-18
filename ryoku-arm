@@ -13,6 +13,8 @@
 #   ryoku-arm plugins             install/upgrade what applies here: Keyboard
 #                                 Light on Apple laptops (bar plugin + a row in
 #                                 quick settings, re-applied after each deploy)
+#   ryoku-arm asahi-fixes         apply upstream Asahi fixes not yet released
+#                                 (asahi-audio: mic MONO position, ab1b469)
 #   ryoku-arm snapshots           snapper snapshots of /
 #   ryoku-arm rollback [N] [--apply]   make snapshot N the root again
 #   ryoku-arm self-update         refresh these scripts from jccr/ryoku-aarch64
@@ -238,6 +240,25 @@ cmd_plugins() {
   fi
 }
 
+# asahi-audio <= v5.0 labels each Mac's processed mic output "AUX0". Quickshell's
+# level meter (the quick-settings mic row) can't map AUX0 to its stereo capture
+# stream and drops every buffer with "pipewire.peak ... missing channels",
+# flooding the shell log. Upstream fixed it in ab1b469 (2026-10-07, unreleased):
+# that output becomes MONO. This applies the identical one-line change to the
+# installed files; a fixed package release overwrites them with the same text.
+cmd_asahi_fixes() {
+  local pat='"audio.position":[[:space:]]*\[[[:space:]]*"AUX0"[[:space:]]*\]' files=()
+  is_apple || return 0
+  mapfile -t files < <(grep -lE "$pat" /usr/share/asahi-audio/*/mic*.json 2>/dev/null || true)
+  ((${#files[@]})) || return 0
+  say "applying asahi-audio's unreleased mic fix (AUX0 -> MONO, upstream ab1b469) to ${#files[@]} file(s)"
+  sudo sed -i -E "s/$pat/\"audio.position\": [\"MONO\"]/" "${files[@]}" || { warn "could not patch asahi-audio"; return 0; }
+  if systemctl --user is-active --quiet wireplumber 2>/dev/null; then
+    systemctl --user restart wireplumber pipewire pipewire-pulse 2>/dev/null \
+      && say "restarted PipeWire to load it"
+  fi
+}
+
 cmd_update() {
   need_repo
   sudo_keepalive
@@ -247,6 +268,7 @@ cmd_update() {
   say "syncing Ryoku's dependencies from origin/$channel"
   cmd_deps --install
   for p in "${anypkgs[@]}"; do build_any "$p"; done
+  cmd_asahi_fixes
   say "handing off to: ryoku update $*"
   # ryoku update: pre-snapshot, fast-forward the checkout, deploy.sh, doctor,
   # post-snapshot. RYOKU_WM pins the provider when run outside a session.
@@ -294,10 +316,11 @@ case ${1:-} in
   deps)        shift; cmd_deps "$@" ;;
   status)      cmd_status ;;
   plugins)     cmd_plugins ;;
+  asahi-fixes) cmd_asahi_fixes ;;
   snapshots)   snapper -c root list ;;
   rollback)    shift; exec "$home_share/snapshot-rollback.sh" "$@" ;;
   self-update) cmd_self_update ;;
   reinstall)   shift; exec "$home_share/ryoku-aarch64.sh" "$@" ;;
-  ""|-h|--help|help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//' ;;
+  ""|-h|--help|help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command: $1 (try ryoku-arm help)" ;;
 esac

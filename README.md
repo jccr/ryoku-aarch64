@@ -45,6 +45,7 @@ ryoku-arm update --system   # same, plus `pacman -Syu` (passed through to ryoku)
 ryoku-arm deps              # what Ryoku's PKGBUILDs want that you're missing
 ryoku-arm status            # `ryoku status` + aarch64 checks (login type, packages)
 ryoku-arm plugins           # install/upgrade the bundled shell plugins that apply here
+ryoku-arm asahi-fixes       # upstream Asahi fixes not yet released (see below)
 ryoku-arm snapshots         # snapper snapshots of /
 ryoku-arm rollback 3        # preview making snapshot 3 the root; add --apply to do it
 ryoku-arm self-update       # refresh these scripts
@@ -77,3 +78,16 @@ On an Apple laptop with a `kbd_backlight` LED, the installer adds both
 (`--no-kbd-plugin` skips), and `ryoku-arm update` upgrades it. It passes `ryoku
 plugin validate` with no findings; it runs only `brightnessctl`, needs no
 privileges, and has no network access (see its README).
+
+## Unreleased Asahi fixes
+
+`ryoku-arm asahi-fixes` (run by the installer and `ryoku-arm update`) applies
+upstream fixes that haven't reached a release yet. Each is the exact upstream
+change, so a fixed package overwrites it with identical content.
+
+- **asahi-audio mic channel position** (upstream
+  [`ab1b469`](https://github.com/AsahiLinux/asahi-audio/commit/ab1b46928d056bb02bb4ad72d522dab57dc9efe1),
+  after v5.0): the processed mic output is labelled `AUX0`, which Quickshell's
+  level meter can't map, so the quick-settings mic row floods the shell log with
+  `pipewire.peak ... missing channels`. The fix relabels it `MONO`. Restarts
+  PipeWire once when it changes something.

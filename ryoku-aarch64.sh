@@ -374,6 +374,10 @@ say "installed ryoku-arm (update with: ryoku-arm update)"
 if ((kbd_plugin && is_asahi)); then
   run "$share/ryoku-arm" plugins || warn "plugin install failed (retry: ryoku-arm plugins)"
 fi
+# upstream Asahi fixes not yet in a release (asahi-audio mic channel position)
+if ((is_asahi)); then
+  run "$share/ryoku-arm" asahi-fixes || warn "asahi-fixes failed (retry: ryoku-arm asahi-fixes)"
+fi
 
 if ((sddm)); then
   say "done. Reboot; log in at the Ryoku login screen (session: Hyprland)."
