@@ -37,6 +37,8 @@
 #               keyboard-backlight slider; the Air has no backlight keys).
 #   --no-apps   skip Ryoku's preinstalled apps (Chromium, Firefox, Kitty,
 #               Nautilus, dev toolchains, ...; read from Ryoku's own lists).
+#   --no-aur    skip Ryoku's AUR set (yay, Zen browser, LocalSend, voxtype
+#               dictation, cursor themes; x86-only entries skipped).
 # Update later:  cd ~/src/ryoku && git pull && ryoku/shell/deploy.sh
 # (do NOT use `ryoku update` — it pulls from the x86_64 repo)
 set -euo pipefail
@@ -51,6 +53,7 @@ sddm=1
 asahi_desktop=1
 kbd_plugin=1
 apps=1
+aur=1
 while [[ $# -gt 0 ]]; do
   case $1 in
     --ref) ref=$2; shift 2 ;;
@@ -63,6 +66,7 @@ while [[ $# -gt 0 ]]; do
     --no-asahi-desktop) asahi_desktop=0; shift ;;
     --no-kbd-plugin) kbd_plugin=0; shift ;;
     --no-apps) apps=0; shift ;;
+    --no-aur) aur=0; shift ;;
     --fish) fish=1; shift ;;   # accepted for compatibility; already the default
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -385,6 +389,10 @@ run env RYOKU_REPO="$dir" "$share/ryoku-arm" seed || warn "seeding failed (retry
 # kernel, boot chain and network managers; see ryoku-arm)
 if ((apps)); then
   run env RYOKU_REPO="$dir" "$share/ryoku-arm" apps --install || warn "app install failed (retry: ryoku-arm apps --install)"
+fi
+# Ryoku's AUR set, after the desktop (as Ryoku's installer does)
+if ((aur)); then
+  run env RYOKU_REPO="$dir" "$share/ryoku-arm" aur --install || warn "AUR step failed (retry: ryoku-arm aur --install)"
 fi
 # upstream Asahi fixes not yet in a release (asahi-audio mic channel position)
 if ((is_asahi)); then

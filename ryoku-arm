@@ -15,6 +15,8 @@
 #                                 quick settings, re-applied after each deploy)
 #   ryoku-arm apps [--install]    Ryoku's preinstalled apps (base + dev lists)
 #                                 that your repos carry, minus kernel/boot
+#   ryoku-arm aur [--install]     Ryoku's AUR set (aur.packages) that supports
+#                                 aarch64, via yay (bootstrapped if missing)
 #   ryoku-arm seed                lay what a checkout install misses (LazyVim,
 #                                 Starship, Yazi, wallpapers, ...) and enable the
 #                                 session units (ryogami, ryoku-idle, ...)
@@ -235,6 +237,61 @@ cmd_seed() {
   command -v update-desktop-database >/dev/null && update-desktop-database -q "$apps" 2>/dev/null || true
   enable_session_units
   if ((seeded_n)); then say "laid $seeded_n Ryoku config file(s)/seed(s) a checkout deploy misses"; else say "Ryoku configs and seeds are current"; fi
+}
+
+# Ryoku's AUR set (system/packages/aur.packages), installed after the desktop
+# like ryoku-shell-installer's stepAUR: bootstrap yay-bin, then build each
+# package best-effort. Each one is checked against the AUR's own Architecture
+# field, so x86-only entries (nvibrant-bin, pam-fprint-grosshack) are skipped
+# without a hand-kept list.
+ensure_yay() {
+  command -v yay >/dev/null && return 0
+  say "bootstrapping yay (AUR helper)"
+  local tmp; tmp=$(mktemp -d)
+  if git clone --quiet --depth 1 https://aur.archlinux.org/yay-bin.git "$tmp/yay-bin" \
+     && ( cd "$tmp/yay-bin" && makepkg -cf --noconfirm >/dev/null ) \
+     && sudo pacman -U --noconfirm "$tmp"/yay-bin/yay-bin-*.pkg.tar.*; then
+    rm -rf "$tmp"; return 0
+  fi
+  rm -rf "$tmp"; warn "could not bootstrap yay"; return 1
+}
+
+aur_arch_ok() { # pkg -> 0 when the AUR says it builds on aarch64 (or any)
+  local archs
+  archs=$(yay -Si --aur "$1" 2>/dev/null | sed -n 's/^Architecture *: *//p' | head -1) || archs=""
+  [[ -n $archs ]] || return 2                        # not found in the AUR
+  [[ " $archs " == *" aarch64 "* || " $archs " == *" any "* ]]
+}
+
+cmd_aur() {
+  need_repo; fetch_upstream
+  local install=0; [[ ${1:-} == --install ]] && install=1
+  local want=() p todo=() noarch=() gone=() failed=()
+  mapfile -t want < <(git -C "$repo" show "origin/$channel:system/packages/aur.packages" 2>/dev/null \
+    | sed -e 's/#.*//' -e 's/[[:space:]]//g' | grep . || true)
+  ((${#want[@]})) || { warn "could not read Ryoku's aur.packages"; return 0; }
+  if ((install)); then ensure_yay || return 0; fi
+  for p in "${want[@]}"; do
+    pacman -Qq "$p" >/dev/null 2>&1 && continue
+    if ! command -v yay >/dev/null; then todo+=("$p"); continue; fi
+    local rc=0; aur_arch_ok "$p" || rc=$?   # bare non-zero would trip set -e
+    case $rc in
+      0) todo+=("$p") ;;
+      2) gone+=("$p") ;;
+      *) noarch+=("$p") ;;
+    esac
+  done
+  ((${#noarch[@]})) && say "x86-only in the AUR (skipped): ${noarch[*]}"
+  ((${#gone[@]})) && warn "not found in the AUR (skipped): ${gone[*]}"
+  if ((${#todo[@]} == 0)); then say "Ryoku's AUR set: nothing left to install"; return 0; fi
+  say "Ryoku AUR packages to install (${#todo[@]}): ${todo[*]}"
+  if ((!install)); then echo "  install with: ryoku-arm aur --install"; return 0; fi
+  for p in "${todo[@]}"; do
+    # one at a time and best-effort, as Ryoku's installer does
+    yay -S --needed --noconfirm --sudoloop "$p" || failed+=("$p")
+  done
+  ((${#failed[@]})) && warn "did not build: ${failed[*]} (retry: yay -S ${failed[*]})"
+  return 0
 }
 
 cmd_deps() {
@@ -469,10 +526,11 @@ case ${1:-} in
   asahi-fixes) cmd_asahi_fixes ;;
   apps)        shift; cmd_apps "$@" ;;
   seed)        cmd_seed ;;
+  aur)         shift; cmd_aur "$@" ;;
   snapshots)   snapper -c root list ;;
   rollback)    shift; exec "$home_share/snapshot-rollback.sh" "$@" ;;
   self-update) cmd_self_update ;;
   reinstall)   shift; exec "$home_share/ryoku-aarch64.sh" "$@" ;;
-  ""|-h|--help|help) sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//' ;;
+  ""|-h|--help|help) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command: $1 (try ryoku-arm help)" ;;
 esac

@@ -46,6 +46,7 @@ ryoku-arm deps              # what Ryoku's PKGBUILDs want that you're missing
 ryoku-arm status            # `ryoku status` + aarch64 checks (login type, packages)
 ryoku-arm plugins           # install/upgrade the bundled shell plugins that apply here
 ryoku-arm apps [--install]  # Ryoku's preinstalled apps your repos carry (Chromium, Firefox, ...)
+ryoku-arm aur [--install]   # Ryoku's AUR set that builds on arm64 (Zen, LocalSend, voxtype, ...)
 ryoku-arm seed              # LazyVim, Starship, Yazi, wallpapers: what a checkout deploy misses
 ryoku-arm asahi-fixes       # upstream Asahi fixes not yet released (see below)
 ryoku-arm snapshots         # snapper snapshots of /
@@ -124,3 +125,13 @@ ryoku-idle, ryoku-clamshell); deploy.sh lays them but never enables them, so on
 a checkout box they only ran when something started them by name (the power
 helper restarts ryoku-shell and ryogami; ryoku-idle and ryoku-clamshell had no
 such path, so idle lock and lid handling were off).
+
+## Ryoku's AUR set
+
+Like Ryoku's ISO, the installer finishes with Ryoku's `aur.packages`
+(`ryoku-arm aur --install`): it bootstraps `yay`, asks the AUR for each
+package's architecture, and builds only those that support `aarch64` or `any`,
+one at a time and best-effort. Today that's yay, Zen browser (which `Mod+B`
+then prefers over Chromium), LocalSend, voxtype dictation, the Fraunces display
+font and three cursor themes; `nvibrant-bin` and `pam-fprint-grosshack` are
+x86-only and skipped. `--no-aur` skips the step.
