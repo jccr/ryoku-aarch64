@@ -241,9 +241,9 @@ cmd_seed() {
 
 # Ryoku's AUR set (system/packages/aur.packages), installed after the desktop
 # like ryoku-shell-installer's stepAUR: bootstrap yay-bin, then build each
-# package best-effort. Each one is checked against the AUR's own Architecture
-# field, so x86-only entries (nvibrant-bin, pam-fprint-grosshack) are skipped
-# without a hand-kept list.
+# package best-effort. Each one's PKGBUILD arch=() is checked (yay -Gp), so
+# x86-only entries (nvibrant-bin, pam-fprint-grosshack) are skipped without a
+# hand-kept list.
 ensure_yay() {
   command -v yay >/dev/null && return 0
   say "bootstrapping yay (AUR helper)"
@@ -256,11 +256,15 @@ ensure_yay() {
   rm -rf "$tmp"; warn "could not bootstrap yay"; return 1
 }
 
-aur_arch_ok() { # pkg -> 0 when the AUR says it builds on aarch64 (or any)
-  local archs
-  archs=$(yay -Si --aur "$1" 2>/dev/null | sed -n 's/^Architecture *: *//p' | head -1) || archs=""
-  [[ -n $archs ]] || return 2                        # not found in the AUR
-  [[ " $archs " == *" aarch64 "* || " $archs " == *" any "* ]]
+aur_arch_ok() { # pkg -> 0 builds on aarch64/any, 1 x86-only, 2 not in the AUR
+  # The AUR API has no architecture field (`yay -Si` never shows one for AUR
+  # packages), so read arch=() from the PKGBUILD itself: `yay -Gp` prints it.
+  local pb arch
+  pb=$(yay -Gp "$1" 2>/dev/null) || pb=""
+  [[ -n $pb ]] || return 2
+  arch=$(printf '%s\n' "$pb" | sed -n 's/^arch=//p' | head -1)
+  [[ -n $arch ]] || return 0                  # unparseable: let the build decide
+  [[ $arch =~ (^|[^a-z0-9_])(aarch64|any)([^a-z0-9_]|$) ]]
 }
 
 cmd_aur() {

@@ -130,7 +130,7 @@ such path, so idle lock and lid handling were off).
 
 Like Ryoku's ISO, the installer finishes with Ryoku's `aur.packages`
 (`ryoku-arm aur --install`): it bootstraps `yay`, asks the AUR for each
-package's architecture, and builds only those that support `aarch64` or `any`,
+package's PKGBUILD `arch=()` (`yay -Gp`), and builds only those that support `aarch64` or `any`,
 one at a time and best-effort. Today that's yay, Zen browser (which `Mod+B`
 then prefers over Chromium), LocalSend, voxtype dictation, the Fraunces display
 font and three cursor themes; `nvibrant-bin` and `pam-fprint-grosshack` are
