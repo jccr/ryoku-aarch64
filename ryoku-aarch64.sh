@@ -138,9 +138,19 @@ mode=--no-reload
 say "building and deploying the desktop (several minutes on first run)"
 run bash "$dir/ryoku/shell/deploy.sh" $mode
 
-if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-  warn "~/.local/bin is not on PATH; add it before logging into Hyprland"
-fi
+# deploy.sh puts every Ryoku binary in ~/.local/bin; a Hyprland started from a
+# TTY inherits the login shell's PATH, so make sure the profile carries it.
+pathline='export PATH="$HOME/.local/bin:$PATH"'
+profiles=("$HOME/.bash_profile")
+[[ $(getent passwd "$USER" | cut -d: -f7) == */zsh ]] && profiles+=("$HOME/.zprofile")
+for prof in "${profiles[@]}"; do
+  if ! grep -qsF '.local/bin' "$prof"; then
+    say "adding ~/.local/bin to PATH in $prof"
+    if ((dry)); then printf '  DRY: append %s to %s\n' "$pathline" "$prof"
+    else printf '\n# added by ryoku-aarch64.sh\n%s\n' "$pathline" >> "$prof"; fi
+  fi
+done
+[[ ":$PATH:" == *":$HOME/.local/bin:"* ]] || warn "open a new login shell (or: source ~/.bash_profile) to pick up the PATH change"
 
 say "done. Log into a Hyprland session (TTY or a display manager)."
 say "update with:  git -C $dir pull && $dir/ryoku/shell/deploy.sh"
