@@ -70,6 +70,17 @@ if pacman -Qq linux-asahi >/dev/null 2>&1 || grep -qa apple /proc/device-tree/co
   say "Apple Silicon / Asahi detected"
 fi
 
+# ---------------------------------------------------------------- sudo
+# One password prompt up front, then keep the timestamp fresh: the builds and
+# the deploy run longer than sudo's 5-minute cache, which otherwise re-prompts
+# at every later sudo step. The refresher dies with this script.
+if ((!dry)); then
+  sudo -v || die "sudo is required"
+  ( while kill -0 "$$" 2>/dev/null; do sudo -n true 2>/dev/null; sleep 50; done ) &
+  sudo_keepalive=$!
+  trap 'kill "$sudo_keepalive" 2>/dev/null' EXIT
+fi
+
 # ---------------------------------------------------------------- packages
 # Union of depends/makedepends of ryoku-desktop, ryoku-desktop-hyprland,
 # ryoku-shell, ryogami and ryoku-blobs, minus:
