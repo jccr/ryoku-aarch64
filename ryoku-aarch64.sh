@@ -65,7 +65,7 @@ pkgs=(
   # build
   base-devel git go cmake ninja pkgconf wayland wayland-protocols
   qt6-base qt6-declarative qt6-shadertools qt6-multimedia qt6-multimedia-ffmpeg
-  vulkan-headers
+  vulkan-headers libcanberra pixman libdrm
   # compositor + shell
   hyprland hypridle hyprpicker hyprpolkitagent hyprsunset
   xdg-desktop-portal-hyprland xdg-desktop-portal-gtk xorg-xwayland weston
