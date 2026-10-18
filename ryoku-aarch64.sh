@@ -198,7 +198,7 @@ fi
 # Ryoku packages that are pure data (cursor themes, UI fonts) build fine on
 # aarch64 from Ryoku's own PKGBUILDs: Bibata is the desktop's and the greeter's
 # cursor; Space Grotesk / Maple Mono are the shell's UI fonts.
-anypkgs=(ryoku-cursors ryoku-cursor-material otf-space-grotesk ttf-maple-mono-nf blesh game-devices-udev)
+anypkgs=(ryoku-cursors ryoku-cursor-material otf-space-grotesk ttf-maple-mono-nf blesh game-devices-udev gpk ryoku-oh-my-zsh)
 pkgcache="$HOME/.cache/ryoku-aarch64/pkgs"
 for p in "${anypkgs[@]}"; do
   if pacman -Qq "$p" >/dev/null 2>&1; then

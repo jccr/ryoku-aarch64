@@ -40,8 +40,10 @@ die()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 [[ $EUID -ne 0 ]] || die "run as your normal user"
 [[ ":$PATH:" == *":$HOME/.local/bin:"* ]] || export PATH="$HOME/.local/bin:$PATH"
 
-# Ryoku packages that are pure data and build on aarch64 from their PKGBUILDs.
-anypkgs=(ryoku-cursors ryoku-cursor-material otf-space-grotesk ttf-maple-mono-nf blesh game-devices-udev)
+# Ryoku packages that build on aarch64 from Ryoku's own PKGBUILDs: pure data
+# (cursors, fonts, oh-my-zsh, blesh, udev rules) and gpk, whose PKGBUILD carries
+# the official arm64 binary. gpk and ryoku-oh-my-zsh are ryoku-desktop hard deps.
+anypkgs=(ryoku-cursors ryoku-cursor-material otf-space-grotesk ttf-maple-mono-nf blesh game-devices-udev gpk ryoku-oh-my-zsh)
 # Packages the PKGBUILDs name that must never be installed here: the generic
 # kernel's headers/dkms (Asahi runs linux-asahi) and virtual provides.
 skip_re='^(linux-headers|dkms|ryoku-desktop-compositor|limine.*|asusctl)$'
