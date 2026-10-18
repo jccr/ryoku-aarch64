@@ -259,8 +259,15 @@ ensure_yay() {
 aur_arch_ok() { # pkg -> 0 builds on aarch64/any, 1 x86-only, 2 not in the AUR
   # The AUR API has no architecture field (`yay -Si` never shows one for AUR
   # packages), so read arch=() from the PKGBUILD itself: `yay -Gp` prints it.
-  local pb arch
+  local pb arch base
   pb=$(yay -Gp "$1" 2>/dev/null) || pb=""
+  if [[ -z $pb ]]; then
+    # a split package (ttf-fraunces-variable from pkgbase fraunces-font) has no
+    # PKGBUILD under its own name: resolve its PackageBase through the AUR API
+    base=$(curl -fsS --max-time 20 "https://aur.archlinux.org/rpc/v5/info?arg%5B%5D=$1" 2>/dev/null \
+      | jq -r '.results[0].PackageBase // empty' 2>/dev/null) || base=""
+    [[ -n $base && $base != "$1" ]] && { pb=$(yay -Gp "$base" 2>/dev/null) || pb=""; }
+  fi
   [[ -n $pb ]] || return 2
   arch=$(printf '%s\n' "$pb" | sed -n 's/^arch=//p' | head -1)
   [[ -n $arch ]] || return 0                  # unparseable: let the build decide
@@ -286,7 +293,7 @@ cmd_aur() {
     esac
   done
   ((${#noarch[@]})) && say "x86-only in the AUR (skipped): ${noarch[*]}"
-  ((${#gone[@]})) && warn "not found in the AUR (skipped): ${gone[*]}"
+  ((${#gone[@]})) && warn "no PKGBUILD found in the AUR (skipped): ${gone[*]}"
   if ((${#todo[@]} == 0)); then say "Ryoku's AUR set: nothing left to install"; return 0; fi
   say "Ryoku AUR packages to install (${#todo[@]}): ${todo[*]}"
   if ((!install)); then echo "  install with: ryoku-arm aur --install"; return 0; fi
