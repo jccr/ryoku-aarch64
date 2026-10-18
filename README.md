@@ -21,3 +21,14 @@ chmod +x snapshots-setup.sh
 ./snapshots-setup.sh           # report + plan, changes nothing
 ./snapshots-setup.sh --apply   # snapper + snap-pac (+ grub-btrfs if GRUB boots you)
 ```
+
+## Rolling back to a snapshot
+
+```sh
+./snapshot-rollback.sh            # list snapshots
+./snapshot-rollback.sh 3          # report + exact commands, changes nothing
+./snapshot-rollback.sh 3 --apply  # swap @ for snapshot 3 (asks to type "rollback")
+```
+
+Keeps the old root as `@.pre-rollback-<timestamp>`; `/home` is untouched.
+Works from the normal system or from a snapshot booted via GRUB.
