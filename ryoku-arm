@@ -162,46 +162,57 @@ install_plugin() { # id
 
 # Keyboard-backlight row in Ryoku's quick settings ("Sound & display"). Plugins
 # cannot extend quick settings, and a user_edits fork would freeze the whole
-# file, so: drop one self-contained QML file beside QuickSettingsHome.qml and
-# insert one line after its screen-brightness control. deploy.sh re-lays the
-# shell on every update, so this is re-applied after each one. Returns 0 when it
-# changed something (the shell needs a restart), 1 when already in place.
+# file, so the row is inserted inline into the deployed QuickSettingsHome.qml,
+# after its screen-brightness control, plus `import Quickshell.Io` for Process.
+# Inline, not a separate .qml file: Quickshell does not register a new file as a
+# type of that folder ("KbdBacklightSlider is not a type" blanked the page).
+# deploy.sh re-lays the shell on every update, so this is re-applied after each
+# one. Returns 0 when it changed something (restart the shell), 1 otherwise.
 qs_dir() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/quickshell/shell/modules/bar/framebars/menus/quicksettings"; }
+qs_marker='ryoku-aarch64 kbd-row begin'
 
-apply_quick_settings() {
-  local dir home row awkf tmp changed=1
-  dir=$(qs_dir); home="$dir/QuickSettingsHome.qml"
-  row="$home_share/quickshell/KbdBacklightSlider.qml"; awkf="$home_share/quickshell/insert-row.awk"
-  [[ -f $home ]] || { warn "quick settings not found at $dir; skipped the keyboard row"; return 1; }
-  [[ -f $row && -f $awkf ]] || { warn "keyboard row files missing (ryoku-arm self-update)"; return 1; }
-  if ! cmp -s "$row" "$dir/KbdBacklightSlider.qml"; then
-    cp -f "$row" "$dir/KbdBacklightSlider.qml"; changed=0
-  fi
-  if ! grep -q 'KbdBacklightSlider {' "$home"; then
-    tmp=$(mktemp)
-    awk -f "$awkf" "$home" > "$tmp"
-    if grep -q 'KbdBacklightSlider {' "$tmp"; then
-      cat "$tmp" > "$home"; changed=0
-      say "added the keyboard backlight row to quick settings"
-    else
-      warn "Ryoku's quick settings layout changed (no screen-brightness anchor); keyboard row skipped"
-    fi
-    rm -f "$tmp"
-  fi
-  return "$changed"
+# Strip everything any version of this step added (exact markers only).
+strip_quick_settings_row() { # file
+  sed -i -e '/ryoku-aarch64 kbd-row begin/,/ryoku-aarch64 kbd-row end/d' \
+         -e '/^import Quickshell\.Io \/\/ ryoku-aarch64$/d' \
+         -e '/KbdBacklightSlider {.*ryoku-aarch64/d' "$1"
 }
 
-# Undo apply_quick_settings (used while the row is disabled): drop the inserted
-# line and the component file, restart the shell if anything changed.
+apply_quick_settings() {
+  local dir home frag awkf tmp
+  dir=$(qs_dir); home="$dir/QuickSettingsHome.qml"
+  frag="$home_share/quickshell/kbd-row.qml.frag"; awkf="$home_share/quickshell/insert-row.awk"
+  rm -f "$dir/KbdBacklightSlider.qml"     # left by the first (broken) version
+  [[ -f $home ]] || { warn "quick settings not found at $dir; skipped the keyboard row"; return 1; }
+  [[ -f $frag && -f $awkf ]] || { warn "keyboard row files missing (ryoku-arm self-update)"; return 1; }
+  # already in place and current: nothing to do
+  if grep -q "$qs_marker" "$home" && ! grep -q 'KbdBacklightSlider {' "$home"; then
+    tmp=$(mktemp)
+    sed -n '/ryoku-aarch64 kbd-row begin/,/ryoku-aarch64 kbd-row end/p' "$home" | sed 's/^[[:space:]]*//' > "$tmp"
+    if diff -q <(sed 's/^[[:space:]]*//' "$frag") "$tmp" >/dev/null; then rm -f "$tmp"; return 1; fi
+    rm -f "$tmp"
+  fi
+  tmp=$(mktemp)
+  cp "$home" "$tmp"; strip_quick_settings_row "$tmp"
+  awk -v frag="$frag" -f "$awkf" "$tmp" "$tmp" > "$tmp.new"
+  if grep -q "$qs_marker" "$tmp.new" && grep -qE '^import[[:space:]]+Quickshell\.Io' "$tmp.new"; then
+    cat "$tmp.new" > "$home"
+    say "added the keyboard backlight row to quick settings"
+    rm -f "$tmp" "$tmp.new"; return 0
+  fi
+  warn "Ryoku's quick settings layout changed (no screen-brightness anchor or Quickshell import); keyboard row skipped"
+  rm -f "$tmp" "$tmp.new"; return 1
+}
+
 remove_quick_settings_row() {
   local dir home changed=0
   dir=$(qs_dir); home="$dir/QuickSettingsHome.qml"
-  if [[ -f $home ]] && grep -q 'KbdBacklightSlider {' "$home"; then
-    sed -i '/KbdBacklightSlider {.*ryoku-aarch64/d' "$home"; changed=1
+  if [[ -f $home ]] && grep -qE 'ryoku-aarch64' "$home"; then
+    strip_quick_settings_row "$home"; changed=1
   fi
   [[ -f $dir/KbdBacklightSlider.qml ]] && { rm -f "$dir/KbdBacklightSlider.qml"; changed=1; }
   if ((changed)); then
-    say "removed the keyboard row from quick settings (disabled pending a fix)"
+    say "removed the keyboard row from quick settings"
     restart_shell_if_live
   fi
 }
@@ -217,8 +228,9 @@ cmd_plugins() {
   # still expose the LED; a native slider on the bar and in quick settings.
   if is_apple && compgen -G '/sys/class/leds/*kbd_backlight*' >/dev/null; then
     install_plugin keyboard-backlight
-    # The quick-settings row blanked the sidebar on first real run (2026-10-18);
-    # off until the QML error is diagnosed. RYOKU_ARM_QS_ROW=1 opts in to test.
+    # The first (separate-file) row blanked quick settings: Quickshell did not
+    # register the new file as a type. The row is now inline; it stays opt-in
+    # (RYOKU_ARM_QS_ROW=1) until confirmed on a real shell.
     if [[ ${RYOKU_ARM_QS_ROW:-0} == 1 ]]; then
       if apply_quick_settings; then restart_shell_if_live; fi
     else
