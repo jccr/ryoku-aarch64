@@ -20,6 +20,9 @@
 #   By default fish becomes your login shell (Ryoku's default shell), after the
 #   build succeeds. --no-fish keeps your current shell.
 #   Undo later: sudo usermod -s /bin/bash $USER
+#   --locale L  UTF-8 locale to generate and set when the system has none
+#               (default en_US.UTF-8; e.g. en_CA.UTF-8). An existing UTF-8
+#               LANG in /etc/locale.conf is left alone.
 # Update later:  cd ~/src/ryoku && git pull && ryoku/shell/deploy.sh
 # (do NOT use `ryoku update` — it pulls from the x86_64 repo)
 set -euo pipefail
@@ -28,12 +31,14 @@ ref=main
 dir="$HOME/src/ryoku"
 dry=0
 fish=1
+lang=en_US.UTF-8
 while [[ $# -gt 0 ]]; do
   case $1 in
     --ref) ref=$2; shift 2 ;;
     --dir) dir=$2; shift 2 ;;
     --dry-run) dry=1; shift ;;
     --no-fish) fish=0; shift ;;
+    --locale) lang=$2; shift 2 ;;
     --fish) fish=1; shift ;;   # accepted for compatibility; already the default
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -191,10 +196,23 @@ if ((fish)); then
   fi
 fi
 
-if [[ $(locale 2>/dev/null | sed -n 's/^LANG=//p' | tr -d '"') != *UTF-8* ]]; then
-  warn "your locale is not UTF-8 (Qt falls back to C.UTF-8). Fix with:"
-  warn "  sudo sed -i 's/^#en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen && sudo locale-gen"
-  warn "  sudo localectl set-locale LANG=en_US.UTF-8   (then log out and back in)"
+# ---------------------------------------------------------------- locale
+# Qt (and the whole desktop) wants a UTF-8 locale; a fresh ALARM install has
+# none and runs as "C". Only act when /etc/locale.conf has no UTF-8 LANG.
+cur_lang=$(sed -n 's/^LANG=//p' /etc/locale.conf 2>/dev/null | tr -d '"')
+if [[ $cur_lang == *UTF-8* || $cur_lang == *utf8* ]]; then
+  say "system locale already $cur_lang"
+else
+  [[ $lang == *.UTF-8 ]] || die "--locale must be a UTF-8 locale, e.g. en_US.UTF-8"
+  grep -qE "^#?[[:space:]]*${lang//./\\.}[[:space:]]+UTF-8" /etc/locale.gen \
+    || die "$lang is not listed in /etc/locale.gen"
+  say "setting the system locale to $lang (was ${cur_lang:-unset})"
+  run sudo sed -i -E "s/^#[[:space:]]*(${lang//./\\.}[[:space:]]+UTF-8)/\\1/" /etc/locale.gen
+  run sudo locale-gen
+  if ! run sudo localectl set-locale "LANG=$lang"; then
+    run sudo bash -c "printf 'LANG=%s\\n' '$lang' > /etc/locale.conf"
+  fi
+  warn "log out and back in for the new locale to apply"
 fi
 
 say "done. Log into a Hyprland session (TTY or a display manager)."
