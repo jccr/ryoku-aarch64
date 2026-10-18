@@ -16,9 +16,10 @@
 # deploy.sh will run `mkinitcpio -P` once for the plymouth theme; that is the
 # same rebuild a kernel update does.
 #
-# Usage:  ./ryoku-aarch64.sh [--ref main] [--dir ~/src/ryoku] [--fish] [--dry-run]
-#   --fish   make fish your login shell (Ryoku's default; same opt-in step as
-#            the official installer). Undo: sudo usermod -s /bin/bash $USER
+# Usage:  ./ryoku-aarch64.sh [--ref main] [--dir ~/src/ryoku] [--no-fish] [--dry-run]
+#   By default fish becomes your login shell (Ryoku's default shell), after the
+#   build succeeds. --no-fish keeps your current shell.
+#   Undo later: sudo usermod -s /bin/bash $USER
 # Update later:  cd ~/src/ryoku && git pull && ryoku/shell/deploy.sh
 # (do NOT use `ryoku update` — it pulls from the x86_64 repo)
 set -euo pipefail
@@ -26,13 +27,14 @@ set -euo pipefail
 ref=main
 dir="$HOME/src/ryoku"
 dry=0
-fish=0
+fish=1
 while [[ $# -gt 0 ]]; do
   case $1 in
     --ref) ref=$2; shift 2 ;;
     --dir) dir=$2; shift 2 ;;
     --dry-run) dry=1; shift ;;
-    --fish) fish=1; shift ;;
+    --no-fish) fish=0; shift ;;
+    --fish) fish=1; shift ;;   # accepted for compatibility; already the default
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
