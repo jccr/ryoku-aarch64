@@ -45,6 +45,7 @@ ryoku-arm update --system   # same, plus `pacman -Syu` (passed through to ryoku)
 ryoku-arm deps              # what Ryoku's PKGBUILDs want that you're missing
 ryoku-arm status            # `ryoku status` + aarch64 checks (login type, packages)
 ryoku-arm plugins           # install/upgrade the bundled shell plugins that apply here
+ryoku-arm apps [--install]  # Ryoku's preinstalled apps your repos carry (Chromium, Firefox, ...)
 ryoku-arm asahi-fixes       # upstream Asahi fixes not yet released (see below)
 ryoku-arm snapshots         # snapper snapshots of /
 ryoku-arm rollback 3        # preview making snapshot 3 the root; add --apply to do it
@@ -91,3 +92,16 @@ change, so a fixed package overwrites it with identical content.
   level meter can't map, so the quick-settings mic row floods the shell log with
   `pipewire.peak ... missing channels`. The fix relabels it `MONO`. Restarts
   PipeWire once when it changes something.
+
+## Ryoku's apps
+
+The installer (and `ryoku-arm apps --install`) installs Ryoku's preinstalled set
+as documented in its `docs/preinstalled.md`, read live from Ryoku's
+`system/packages/base.packages` and `dev.packages`: Chromium, Firefox, Kitty,
+Nautilus, mpv, the dev toolchains, flatpak, qemu, docker, and the rest. It never
+installs the generic kernel/headers, Limine and the boot chain, or network
+managers from those lists (Asahi boots `linux-asahi`, and switching network
+managers would change how the machine gets online). `hardware.packages` (x86
+GPU drivers) and `aur.packages` (mostly x86 `-bin` builds) are skipped; anything
+listed but missing from your repos is reported, not forced. `--no-apps` skips
+the step. Docker and other services are installed, not enabled.

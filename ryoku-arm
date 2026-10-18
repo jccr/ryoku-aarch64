@@ -13,6 +13,8 @@
 #   ryoku-arm plugins             install/upgrade what applies here: Keyboard
 #                                 Light on Apple laptops (bar plugin + a row in
 #                                 quick settings, re-applied after each deploy)
+#   ryoku-arm apps [--install]    Ryoku's preinstalled apps (base + dev lists)
+#                                 that your repos carry, minus kernel/boot
 #   ryoku-arm asahi-fixes         apply upstream Asahi fixes not yet released
 #                                 (asahi-audio: mic MONO position, ab1b469)
 #   ryoku-arm snapshots           snapper snapshots of /
@@ -36,7 +38,7 @@ die()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 [[ ":$PATH:" == *":$HOME/.local/bin:"* ]] || export PATH="$HOME/.local/bin:$PATH"
 
 # Ryoku packages that are pure data and build on aarch64 from their PKGBUILDs.
-anypkgs=(ryoku-cursors ryoku-cursor-material otf-space-grotesk ttf-maple-mono-nf)
+anypkgs=(ryoku-cursors ryoku-cursor-material otf-space-grotesk ttf-maple-mono-nf blesh game-devices-udev)
 # Packages the PKGBUILDs name that must never be installed here: the generic
 # kernel's headers/dkms (Asahi runs linux-asahi) and virtual provides.
 skip_re='^(linux-headers|dkms|ryoku-desktop-compositor|limine.*|asusctl)$'
@@ -89,6 +91,46 @@ wanted_deps() {
   for p in "${desktop_pkgs[@]}"; do pkgbuild_field "$p" depends makedepends; done \
     | sed 's/[<>=].*//' | grep . | sort -u \
     | grep -vxF -f <(printf '%s\n' "$own") | grep -vE "$skip_re" || true
+}
+
+# Ryoku's preinstalled set (docs/preinstalled.md) lives in system/packages/:
+# base.packages (system + apps) and dev.packages (toolchains). hardware.packages
+# is x86 GPU drivers/microcode and aur.packages mostly x86 -bin builds, so both
+# are skipped. Never installed here, whatever the lists say: the generic kernel
+# and headers (Asahi boots linux-asahi), the Limine/initramfs/boot chain and
+# snapshot stack (set up separately), and network managers (would change how
+# this machine gets online).
+apps_skip_re='^(base|base-devel|linux|linux-firmware|linux-headers|linux-.*-headers|dkms|mkinitcpio|sudo|btrfs-progs|cryptsetup|dosfstools|efibootmgr|limine.*|plymouth|snapper|snap-pac|networkmanager|iwd|wpa_supplicant|xpadneo-dkms|broadcom-.*|.*-ucode)$'
+
+wanted_apps() {
+  for list in base dev; do
+    git -C "$repo" show "origin/$channel:system/packages/$list.packages" 2>/dev/null
+  done | sed -e 's/#.*//' -e 's/[[:space:]]//g' | grep . | sort -u | grep -vE "$apps_skip_re" || true
+}
+
+cmd_apps() {
+  need_repo; fetch_upstream
+  local install=0; [[ ${1:-} == --install ]] && install=1
+  mapfile -t want < <(wanted_apps)
+  ((${#want[@]})) || { warn "could not read Ryoku's package lists from origin/$channel"; return 0; }
+  declare -A repo_has=()
+  while IFS= read -r n; do repo_has[$n]=1; done < <(pacman -Slq)
+  local missing=() unavailable=()
+  for a in "${want[@]}"; do
+    pacman -T "$a" >/dev/null 2>&1 && continue
+    if [[ -n ${repo_has[$a]:-} ]]; then missing+=("$a"); else unavailable+=("$a"); fi
+  done
+  ((${#unavailable[@]})) && warn "in Ryoku's lists but not in your repos (skipped): ${unavailable[*]}"
+  if ((${#missing[@]} == 0)); then
+    say "all ${#want[@]} applicable Ryoku apps are installed"
+    return 0
+  fi
+  say "Ryoku apps not installed yet (${#missing[@]}): ${missing[*]}"
+  if ((install)); then
+    sudo pacman -S --needed --noconfirm "${missing[@]}"
+  else
+    echo "  install with: ryoku-arm apps --install"
+  fi
 }
 
 cmd_deps() {
@@ -317,10 +359,11 @@ case ${1:-} in
   status)      cmd_status ;;
   plugins)     cmd_plugins ;;
   asahi-fixes) cmd_asahi_fixes ;;
+  apps)        shift; cmd_apps "$@" ;;
   snapshots)   snapper -c root list ;;
   rollback)    shift; exec "$home_share/snapshot-rollback.sh" "$@" ;;
   self-update) cmd_self_update ;;
   reinstall)   shift; exec "$home_share/ryoku-aarch64.sh" "$@" ;;
-  ""|-h|--help|help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//' ;;
+  ""|-h|--help|help) sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command: $1 (try ryoku-arm help)" ;;
 esac

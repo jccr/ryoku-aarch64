@@ -35,6 +35,8 @@
 #               desktop: speaker safety, asahi-audio, Asahi Vulkan, widevine).
 #   --no-kbd-plugin  on a MacBook, skip the Keyboard Light bar plugin (a
 #               keyboard-backlight slider; the Air has no backlight keys).
+#   --no-apps   skip Ryoku's preinstalled apps (Chromium, Firefox, Kitty,
+#               Nautilus, dev toolchains, ...; read from Ryoku's own lists).
 # Update later:  cd ~/src/ryoku && git pull && ryoku/shell/deploy.sh
 # (do NOT use `ryoku update` — it pulls from the x86_64 repo)
 set -euo pipefail
@@ -48,6 +50,7 @@ ttyfont=ter-v32n
 sddm=1
 asahi_desktop=1
 kbd_plugin=1
+apps=1
 while [[ $# -gt 0 ]]; do
   case $1 in
     --ref) ref=$2; shift 2 ;;
@@ -59,6 +62,7 @@ while [[ $# -gt 0 ]]; do
     --no-sddm) sddm=0; shift ;;
     --no-asahi-desktop) asahi_desktop=0; shift ;;
     --no-kbd-plugin) kbd_plugin=0; shift ;;
+    --no-apps) apps=0; shift ;;
     --fish) fish=1; shift ;;   # accepted for compatibility; already the default
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -194,7 +198,7 @@ fi
 # Ryoku packages that are pure data (cursor themes, UI fonts) build fine on
 # aarch64 from Ryoku's own PKGBUILDs: Bibata is the desktop's and the greeter's
 # cursor; Space Grotesk / Maple Mono are the shell's UI fonts.
-anypkgs=(ryoku-cursors ryoku-cursor-material otf-space-grotesk ttf-maple-mono-nf)
+anypkgs=(ryoku-cursors ryoku-cursor-material otf-space-grotesk ttf-maple-mono-nf blesh game-devices-udev)
 pkgcache="$HOME/.cache/ryoku-aarch64/pkgs"
 for p in "${anypkgs[@]}"; do
   if pacman -Qq "$p" >/dev/null 2>&1; then
@@ -373,6 +377,11 @@ say "installed ryoku-arm (update with: ryoku-arm update)"
 # with a kbd_backlight LED. ryoku-arm decides; it upgrades it on later updates.
 if ((kbd_plugin && is_asahi)); then
   run "$share/ryoku-arm" plugins || warn "plugin install failed (retry: ryoku-arm plugins)"
+fi
+# Ryoku's preinstalled apps, read from its system/packages lists (minus the
+# kernel, boot chain and network managers; see ryoku-arm)
+if ((apps)); then
+  run env RYOKU_REPO="$dir" "$share/ryoku-arm" apps --install || warn "app install failed (retry: ryoku-arm apps --install)"
 fi
 # upstream Asahi fixes not yet in a release (asahi-audio mic channel position)
 if ((is_asahi)); then
