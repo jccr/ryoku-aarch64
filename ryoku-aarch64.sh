@@ -82,11 +82,15 @@ pkgs=(
 say "refreshing package databases"
 run sudo pacman -Sy
 
-mapfile -t avail < <(pacman -Slq | sort -u)
+# hash lookup, not `printf | grep -q`: under pipefail grep -q's early exit
+# SIGPIPEs printf and the pipeline reports failure on a match.
+declare -A avail=()
+while IFS= read -r n; do avail[$n]=1; done < <(pacman -Slq)
 have=() missing=()
 for p in "${pkgs[@]}"; do
-  if printf '%s\n' "${avail[@]}" | grep -qxF -- "$p"; then have+=("$p"); else missing+=("$p"); fi
+  if [[ -n ${avail[$p]:-} ]]; then have+=("$p"); else missing+=("$p"); fi
 done
+((${#avail[@]})) || die "pacman -Slq returned nothing; run 'sudo pacman -Sy' first"
 ((${#missing[@]})) && warn "not in your repos (skipped; try the AUR): ${missing[*]}"
 
 say "installing ${#have[@]} packages"
@@ -98,7 +102,7 @@ run sudo pacman -Su --needed --noconfirm "${have[@]}"
 # empty repo so nothing ever fetches the (nonexistent) aarch64 db.
 localrepo=/var/lib/ryoku-local
 if grep -q '^\[ryoku\]' /etc/pacman.conf; then
-  if awk '/^\[ryoku\]/{f=1;next} /^\[/{f=0} f' /etc/pacman.conf | grep -q 'repo.ryoku.dev'; then
+  if awk '/^\[ryoku\]/{f=1;next} /^\[/{f=0} f && /repo\.ryoku\.dev/{hit=1} END{exit !hit}' /etc/pacman.conf; then
     say "repointing the existing [ryoku] stanza at $localrepo"
     run sudo cp /etc/pacman.conf /etc/pacman.conf.pre-ryoku-aarch64
     run sudo sed -i "/^\[ryoku\]/,/^\[/ { s|^SigLevel *=.*|SigLevel = Never|; s|^Server *=.*|Server = file://$localrepo| }" /etc/pacman.conf
