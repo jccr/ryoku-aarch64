@@ -62,7 +62,17 @@ that opens a slider for the keyboard backlight, styled like Ryoku's own
 Brightness panel. The MacBook Air has no keyboard-brightness keys (macOS moved
 it to Control Center), and Ryoku's sidebar only has screen brightness.
 
-On an Apple laptop with a `kbd_backlight` LED, the installer adds it to the bar
+It also adds a keyboard-backlight row to Ryoku's quick settings ("Sound &
+display", under screen brightness), built from Ryoku's own slider row: drag to
+set, tap the icon to toggle off / back on. Plugins can't extend quick settings,
+so `ryoku-arm` drops `quickshell/KbdBacklightSlider.qml` beside Ryoku's
+`QuickSettingsHome.qml` and inserts one line after the brightness control. The
+deploy re-lays the shell on every update, so `ryoku-arm update` re-applies it
+(run `ryoku-arm plugins` after a bare `ryoku update` or `deploy.sh`). If Ryoku
+ever moves the brightness control, the row is skipped with a warning rather than
+breaking the sidebar.
+
+On an Apple laptop with a `kbd_backlight` LED, the installer adds both
 (`--no-kbd-plugin` skips), and `ryoku-arm update` upgrades it. It passes `ryoku
 plugin validate` with no findings; it runs only `brightnessctl`, needs no
 privileges, and has no network access (see its README).
