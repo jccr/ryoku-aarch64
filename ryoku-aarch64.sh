@@ -146,6 +146,14 @@ fi
 # ---------------------------------------------------------------- build + deploy
 mode=--no-reload
 [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] && mode=
+# Outside a session Ryoku guesses the compositor from an existing ~/.config/hypr;
+# on a first run there is none, so deploy.sh reports "no compositor payload for
+# none" and skips the Hyprland pass. RYOKU_WM is the override its detector
+# checks first (ryoku/wm/detect.go).
+export RYOKU_WM=${RYOKU_WM:-hyprland}
+# upstream deploy.sh copies config.fish without creating the dir first; on an
+# account where fish never ran that aborts the deploy.
+run mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/fish"
 say "building and deploying the desktop (several minutes on first run)"
 run bash "$dir/ryoku/shell/deploy.sh" $mode
 
@@ -176,6 +184,12 @@ if ((fish)); then
     run sudo usermod -s /usr/bin/fish "$USER"
     say "undo with:  sudo usermod -s $cur $USER"
   fi
+fi
+
+if [[ $(locale 2>/dev/null | sed -n 's/^LANG=//p' | tr -d '"') != *UTF-8* ]]; then
+  warn "your locale is not UTF-8 (Qt falls back to C.UTF-8). Fix with:"
+  warn "  sudo sed -i 's/^#en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen && sudo locale-gen"
+  warn "  sudo localectl set-locale LANG=en_US.UTF-8   (then log out and back in)"
 fi
 
 say "done. Log into a Hyprland session (TTY or a display manager)."
