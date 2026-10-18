@@ -191,6 +191,21 @@ apply_quick_settings() {
   return "$changed"
 }
 
+# Undo apply_quick_settings (used while the row is disabled): drop the inserted
+# line and the component file, restart the shell if anything changed.
+remove_quick_settings_row() {
+  local dir home changed=0
+  dir=$(qs_dir); home="$dir/QuickSettingsHome.qml"
+  if [[ -f $home ]] && grep -q 'KbdBacklightSlider {' "$home"; then
+    sed -i '/KbdBacklightSlider {.*ryoku-aarch64/d' "$home"; changed=1
+  fi
+  [[ -f $dir/KbdBacklightSlider.qml ]] && { rm -f "$dir/KbdBacklightSlider.qml"; changed=1; }
+  if ((changed)); then
+    say "removed the keyboard row from quick settings (disabled pending a fix)"
+    restart_shell_if_live
+  fi
+}
+
 restart_shell_if_live() {
   if systemctl --user is-active --quiet ryoku-shell 2>/dev/null; then
     systemctl --user restart ryoku-shell && say "restarted the Ryoku shell"
@@ -202,7 +217,13 @@ cmd_plugins() {
   # still expose the LED; a native slider on the bar and in quick settings.
   if is_apple && compgen -G '/sys/class/leds/*kbd_backlight*' >/dev/null; then
     install_plugin keyboard-backlight
-    if apply_quick_settings; then restart_shell_if_live; fi
+    # The quick-settings row blanked the sidebar on first real run (2026-10-18);
+    # off until the QML error is diagnosed. RYOKU_ARM_QS_ROW=1 opts in to test.
+    if [[ ${RYOKU_ARM_QS_ROW:-0} == 1 ]]; then
+      if apply_quick_settings; then restart_shell_if_live; fi
+    else
+      remove_quick_settings_row
+    fi
   fi
 }
 
