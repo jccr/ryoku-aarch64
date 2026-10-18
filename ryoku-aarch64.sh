@@ -65,6 +65,7 @@ pkgs=(
   # build
   base-devel git go cmake ninja pkgconf wayland wayland-protocols
   qt6-base qt6-declarative qt6-shadertools qt6-multimedia qt6-multimedia-ffmpeg
+  vulkan-headers
   # compositor + shell
   hyprland hypridle hyprpicker hyprpolkitagent hyprsunset
   xdg-desktop-portal-hyprland xdg-desktop-portal-gtk xorg-xwayland weston
@@ -120,11 +121,15 @@ else
   run sudo cp /etc/pacman.conf /etc/pacman.conf.pre-ryoku-aarch64
   run sudo bash -c "printf '\n[ryoku]\nSigLevel = Never\nServer = file://%s\n' '$localrepo' >> /etc/pacman.conf"
 fi
-if [[ ! -e $localrepo/ryoku.db ]]; then
-  run sudo install -d "$localrepo"
-  run sudo tar -czf "$localrepo/ryoku.db.tar.gz" --files-from /dev/null
-  run sudo ln -sf ryoku.db.tar.gz "$localrepo/ryoku.db"
-fi
+# both the package db and the files db (pacman -F) must exist, or pacman -Fy
+# fails "failed retrieving file 'ryoku.files'"
+run sudo install -d "$localrepo"
+for kind in db files; do
+  if [[ ! -e $localrepo/ryoku.$kind ]]; then
+    run sudo tar -czf "$localrepo/ryoku.$kind.tar.gz" --files-from /dev/null
+    run sudo ln -sf "ryoku.$kind.tar.gz" "$localrepo/ryoku.$kind"
+  fi
+done
 run sudo pacman -Sy
 
 # ---------------------------------------------------------------- source
