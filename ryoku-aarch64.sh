@@ -26,6 +26,11 @@
 #   --tty-font F  console font for the text TTY when none is set (default
 #               ter-v32n, sized for Retina panels; ter-v24n is smaller;
 #               "none" skips). An existing FONT= in /etc/vconsole.conf wins.
+#   --no-sddm   skip the SDDM login screen (by default SDDM + Ryoku's greeter
+#               theme become the login, the way a stock Ryoku box boots).
+#               Starting Hyprland from a TTY instead leaves logind treating the
+#               session as type=tty, and polkit then denies the shell's
+#               sleep/lid inhibitors and its auth agent.
 # Update later:  cd ~/src/ryoku && git pull && ryoku/shell/deploy.sh
 # (do NOT use `ryoku update` — it pulls from the x86_64 repo)
 set -euo pipefail
@@ -36,6 +41,7 @@ dry=0
 fish=1
 lang=en_US.UTF-8
 ttyfont=ter-v32n
+sddm=1
 while [[ $# -gt 0 ]]; do
   case $1 in
     --ref) ref=$2; shift 2 ;;
@@ -44,6 +50,7 @@ while [[ $# -gt 0 ]]; do
     --no-fish) fish=0; shift ;;
     --locale) lang=$2; shift 2 ;;
     --tty-font) ttyfont=$2; shift 2 ;;
+    --no-sddm) sddm=0; shift ;;
     --fish) fish=1; shift ;;   # accepted for compatibility; already the default
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -159,6 +166,25 @@ else
   run git clone --depth 1 --branch "$ref" https://github.com/Ryoku-dev/ryoku.git "$dir"
 fi
 
+# ---------------------------------------------------------------- arch=any extras
+# Ryoku packages that are pure data (cursor themes, UI fonts) build fine on
+# aarch64 from Ryoku's own PKGBUILDs: Bibata is the desktop's and the greeter's
+# cursor; Space Grotesk / Maple Mono are the shell's UI fonts.
+anypkgs=(ryoku-cursors ryoku-cursor-material otf-space-grotesk ttf-maple-mono-nf)
+pkgcache="$HOME/.cache/ryoku-aarch64/pkgs"
+for p in "${anypkgs[@]}"; do
+  if pacman -Qq "$p" >/dev/null 2>&1; then
+    continue
+  fi
+  say "building $p from Ryoku's PKGBUILD"
+  if ((dry)); then printf '  DRY: makepkg -sci in %s\n' "$pkgcache/$p"; continue; fi
+  rm -rf "${pkgcache:?}/$p"; mkdir -p "$pkgcache"
+  cp -a "$dir/release/packages/$p" "$pkgcache/$p"
+  sudo -v
+  ( cd "$pkgcache/$p" && makepkg -sci --noconfirm --needed ) >"$pkgcache/$p.log" 2>&1 \
+    || warn "$p did not build (non-fatal); see $pkgcache/$p.log"
+done
+
 # ---------------------------------------------------------------- build + deploy
 mode=--no-reload
 [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] && mode=
@@ -177,6 +203,29 @@ export RYOKU_WM=${RYOKU_WM:-hyprland}
 run mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/fish"
 say "building and deploying the desktop (several minutes on first run)"
 run bash "$dir/ryoku/shell/deploy.sh" $mode
+
+# ---------------------------------------------------------------- SDDM login
+# Mirrors ryoku-shell-installer's stepSession: Ryoku's own sddm/setup (enable
+# sddm, graphical target, keyring PAM, Wayland greeter via weston kiosk, cursor
+# fallback), then the greeter half of install-qylock (theme + selection). The
+# in-session lock half was already staged by deploy.sh, and install-qylock
+# refuses to re-stage it outside Ryoku's generation guard, so it is not rerun.
+if ((sddm)); then
+  say "setting up the SDDM login screen with Ryoku's greeter"
+  run sudo pacman -S --needed --noconfirm sddm
+  run sudo -v    # sddm/setup uses sudo -n
+  if ((dry)); then
+    run bash "$dir/ryoku/lockscreen/sddm/setup" --dry-run
+  else
+    bash "$dir/ryoku/lockscreen/sddm/setup"
+  fi
+  run sudo install -d /usr/share/ryoku /usr/share/sddm/themes /etc/sddm.conf.d
+  run sudo rm -rf /usr/share/ryoku/qylock /usr/share/sddm/themes/ryoku
+  run sudo cp -a "$dir/ryoku/lockscreen/qylock" /usr/share/ryoku/qylock
+  run sudo cp -a /usr/share/ryoku/qylock/themes/clockwork/orbital /usr/share/sddm/themes/ryoku
+  run sudo bash -c "printf '[Theme]\\nCurrent=ryoku\\n' > /etc/sddm.conf.d/99-ryoku.conf"
+  warn "SDDM starts at the next boot; reboot and log in through it"
+fi
 
 # deploy.sh puts every Ryoku binary in ~/.local/bin; a Hyprland started from a
 # TTY inherits the login shell's PATH, so make sure the profile carries it.
@@ -241,6 +290,10 @@ if [[ $ttyfont != none ]]; then
   fi
 fi
 
-say "done. Log into a Hyprland session (TTY or a display manager)."
+if ((sddm)); then
+  say "done. Reboot; log in at the Ryoku login screen (session: Hyprland)."
+else
+  say "done. Log into a Hyprland session (TTY or a display manager)."
+fi
 say "update with:  git -C $dir pull && $dir/ryoku/shell/deploy.sh"
 say "undo pacman.conf with:  sudo cp /etc/pacman.conf.pre-ryoku-aarch64 /etc/pacman.conf"
