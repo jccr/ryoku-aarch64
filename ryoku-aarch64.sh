@@ -31,6 +31,8 @@
 #               Starting Hyprland from a TTY instead leaves logind treating the
 #               session as type=tty, and polkit then denies the shell's
 #               sleep/lid inhibitors and its auth agent.
+#   --no-asahi-desktop  on Asahi, skip asahi-desktop-meta (installed after the
+#               desktop: speaker safety, asahi-audio, Asahi Vulkan, widevine).
 # Update later:  cd ~/src/ryoku && git pull && ryoku/shell/deploy.sh
 # (do NOT use `ryoku update` — it pulls from the x86_64 repo)
 set -euo pipefail
@@ -42,6 +44,7 @@ fish=1
 lang=en_US.UTF-8
 ttyfont=ter-v32n
 sddm=1
+asahi_desktop=1
 while [[ $# -gt 0 ]]; do
   case $1 in
     --ref) ref=$2; shift 2 ;;
@@ -51,6 +54,7 @@ while [[ $# -gt 0 ]]; do
     --locale) lang=$2; shift 2 ;;
     --tty-font) ttyfont=$2; shift 2 ;;
     --no-sddm) sddm=0; shift ;;
+    --no-asahi-desktop) asahi_desktop=0; shift ;;
     --fish) fish=1; shift ;;   # accepted for compatibility; already the default
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -66,7 +70,9 @@ run()  { if ((dry)); then printf '  DRY: %s\n' "$*"; else "$@"; fi; }
 [[ $EUID -ne 0 ]] || die "run as your normal user; sudo is used where needed"
 command -v pacman >/dev/null || die "pacman not found"
 [[ -d /run/systemd/system ]] || die "Ryoku needs systemd"
-if pacman -Qq linux-asahi >/dev/null 2>&1 || grep -qa apple /proc/device-tree/compatible 2>/dev/null; then
+is_asahi=0
+if pacman -Qq linux-asahi asahi-meta >/dev/null 2>&1 || grep -qa apple /proc/device-tree/compatible 2>/dev/null; then
+  is_asahi=1
   say "Apple Silicon / Asahi detected"
 fi
 
@@ -234,6 +240,31 @@ export RYOKU_WM=${RYOKU_WM:-hyprland}
 run mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/fish"
 say "building and deploying the desktop (several minutes on first run)"
 run bash "$dir/ryoku/shell/deploy.sh" $mode
+
+# ---------------------------------------------------------------- Asahi desktop
+# asahi-desktop-meta is Asahi's hardware support for a desktop, not a desktop
+# environment: speakersafetyd (protects the speakers), asahi-audio/bankstown,
+# the Asahi Vulkan drivers, widevine, startup-disk. Installed after the Ryoku
+# desktop so the desktop's own deps are settled first.
+if ((asahi_desktop && is_asahi)); then
+  if pacman -Si asahi-desktop-meta >/dev/null 2>&1; then
+    say "installing asahi-desktop-meta (Asahi audio, speaker safety, Vulkan)"
+    run sudo pacman -S --needed --noconfirm asahi-desktop-meta
+  else
+    warn "asahi-desktop-meta not in your repos; skipped"
+  fi
+fi
+
+# ---------------------------------------------------------------- services
+# What Ryoku's ISO enables (installation/backend/lib/bootloader.sh), minus
+# NetworkManager: switching network managers here would cut an SSH session and
+# override how this install already does Wi-Fi.
+for unit in bluetooth.service rtkit-daemon.service power-profiles-daemon.service; do
+  if systemctl list-unit-files "$unit" >/dev/null 2>&1 && ! systemctl is-enabled --quiet "$unit" 2>/dev/null; then
+    say "enabling $unit"
+    run sudo systemctl enable --now "$unit" || warn "could not enable $unit"
+  fi
+done
 
 # ---------------------------------------------------------------- SDDM login
 # Mirrors ryoku-shell-installer's stepSession: Ryoku's own sddm/setup (enable
