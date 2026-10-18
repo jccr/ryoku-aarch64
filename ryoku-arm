@@ -1,0 +1,195 @@
+#!/usr/bin/env bash
+# ryoku-arm — the aarch64 companion to Ryoku's own `ryoku` CLI.
+#
+# A source-built (checkout) Ryoku box updates through `ryoku update`, which
+# snapshots, fast-forwards the checkout, redeploys and runs the doctor. What it
+# cannot do on aarch64 is what the [ryoku] packages do on x86: pull in new
+# pacman dependencies and the arch=any Ryoku packages (cursors, UI fonts).
+# ryoku-arm fills exactly that gap and hands everything else to `ryoku`.
+#
+#   ryoku-arm update [--system]   sync deps + arch=any packages, then `ryoku update`
+#   ryoku-arm deps [--install]    deps Ryoku's PKGBUILDs want that are missing
+#   ryoku-arm status              `ryoku status` + aarch64 checks
+#   ryoku-arm snapshots           snapper snapshots of /
+#   ryoku-arm rollback [N] [--apply]   make snapshot N the root again
+#   ryoku-arm self-update         refresh these scripts from jccr/ryoku-aarch64
+#   ryoku-arm reinstall [args]    rerun ryoku-aarch64.sh (full install path)
+#
+# Dependencies are read from Ryoku's PKGBUILDs on origin/main at run time, so
+# this never drifts from upstream the way a hand-kept list does.
+set -euo pipefail
+
+home_share="${XDG_DATA_HOME:-$HOME/.local/share}/ryoku-aarch64"
+repo="${RYOKU_REPO:-$HOME/src/ryoku}"
+channel=main
+
+say()  { printf '\033[1m==>\033[0m %s\n' "$*"; }
+warn() { printf '\033[33m  !\033[0m %s\n' "$*" >&2; }
+die()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+
+[[ $EUID -ne 0 ]] || die "run as your normal user"
+[[ ":$PATH:" == *":$HOME/.local/bin:"* ]] || export PATH="$HOME/.local/bin:$PATH"
+
+# Ryoku packages that are pure data and build on aarch64 from their PKGBUILDs.
+anypkgs=(ryoku-cursors ryoku-cursor-material otf-space-grotesk ttf-maple-mono-nf)
+# Packages the PKGBUILDs name that must never be installed here: the generic
+# kernel's headers/dkms (Asahi runs linux-asahi) and virtual provides.
+skip_re='^(linux-headers|dkms|ryoku-desktop-compositor|limine.*|asusctl)$'
+# The PKGBUILDs whose deps make up the desktop (what ryoku-desktop pulls in).
+desktop_pkgs=(ryoku-desktop ryoku-desktop-hyprland ryoku-shell ryogami ryoku-blobs
+              ryoku-hub ryoku ryoku-keysounds ryoku-rashin ryoku-palette-bridge)
+
+sudo_keepalive() {
+  sudo -v || die "sudo is required"
+  ( while kill -0 "$$" 2>/dev/null; do sudo -n true 2>/dev/null; sleep 50; done ) &
+  keepalive_pid=$!
+  trap 'kill "$keepalive_pid" 2>/dev/null' EXIT
+}
+
+need_repo() {
+  [[ -d $repo/.git ]] || die "no Ryoku checkout at $repo (set RYOKU_REPO, or run ryoku-arm reinstall)"
+}
+
+# Keep the checkout on a real `main` branch. Ryoku's updater fast-forwards any
+# HEAD, but only reconciles a rewritten upstream when HEAD is the channel branch;
+# older ryoku-aarch64.sh runs left it detached.
+ensure_branch() {
+  local head
+  head=$(git -C "$repo" symbolic-ref --short --quiet HEAD 2>/dev/null || true)
+  if [[ $head != "$channel" ]]; then
+    say "putting $repo back on branch $channel (was ${head:-detached})"
+    git -C "$repo" checkout -q -B "$channel"
+  fi
+  git -C "$repo" config "branch.$channel.remote" origin
+  git -C "$repo" config "branch.$channel.merge" "refs/heads/$channel"
+}
+
+fetch_upstream() {
+  GIT_TERMINAL_PROMPT=0 git -C "$repo" fetch --quiet --no-tags origin \
+    "+refs/heads/$channel:refs/remotes/origin/$channel" \
+    || warn "could not reach origin; using the last fetched origin/$channel"
+}
+
+# Print one PKGBUILD field (array) from origin/main without touching the
+# working tree. PKGBUILDs are shell; they come from the same repo deploy.sh runs.
+pkgbuild_field() { # pkg field...
+  local pkg=$1; shift
+  git -C "$repo" show "origin/$channel:release/packages/$pkg/PKGBUILD" 2>/dev/null \
+    | bash -c 'source /dev/stdin >/dev/null 2>&1; for f in "$@"; do eval "printf \"%s\\n\" \"\${$f[@]}\""; done' _ "$@"
+}
+
+wanted_deps() {
+  local own
+  own=$(git -C "$repo" ls-tree --name-only "origin/$channel:release/packages/" 2>/dev/null)
+  for p in "${desktop_pkgs[@]}"; do pkgbuild_field "$p" depends makedepends; done \
+    | sed 's/[<>=].*//' | grep . | sort -u \
+    | grep -vxF -f <(printf '%s\n' "$own") | grep -vE "$skip_re" || true
+}
+
+cmd_deps() {
+  need_repo; fetch_upstream
+  local install=0; [[ ${1:-} == --install ]] && install=1
+  mapfile -t want < <(wanted_deps)
+  declare -A repo_has=()
+  while IFS= read -r n; do repo_has[$n]=1; done < <(pacman -Slq)
+  local missing=() unavailable=()
+  for d in "${want[@]}"; do
+    pacman -T "$d" >/dev/null 2>&1 && continue          # satisfied (incl. provides)
+    if [[ -n ${repo_has[$d]:-} ]]; then missing+=("$d"); else unavailable+=("$d"); fi
+  done
+  ((${#unavailable[@]})) && warn "wanted by Ryoku but not in your repos: ${unavailable[*]}"
+  if ((${#missing[@]} == 0)); then
+    say "all ${#want[@]} Ryoku dependencies are installed"
+    return 0
+  fi
+  say "missing: ${missing[*]}"
+  if ((install)); then
+    sudo pacman -S --needed --noconfirm "${missing[@]}"
+  else
+    echo "  install with: ryoku-arm deps --install"
+  fi
+}
+
+# Rebuild an arch=any Ryoku package when it is missing or its PKGBUILD version
+# moved. makepkg runs unprivileged; deps and the result go through sudo pacman.
+build_any() {
+  local p=$1 want have work log
+  want="$(pkgbuild_field "$p" pkgver | head -1)-$(pkgbuild_field "$p" pkgrel | head -1)"
+  have=$(pacman -Q "$p" 2>/dev/null | awk '{print $2}' | sed 's/^[0-9]*://')
+  [[ $have == "$want" ]] && return 0
+  say "building $p $want${have:+ (installed $have)}"
+  work="$HOME/.cache/ryoku-aarch64/pkgs"; log="$work/$p.log"
+  rm -rf "${work:?}/$p"; mkdir -p "$work"
+  git -C "$repo" archive "origin/$channel" "release/packages/$p" | tar -x -C "$work" \
+    && mv "$work/release/packages/$p" "$work/$p" && rm -rf "$work/release"
+  mapfile -t deps < <(pkgbuild_field "$p" depends makedepends | sed 's/[<>=].*//' | grep . || true)
+  # shellcheck disable=SC2024  # the log is the user's file
+  if ((${#deps[@]})) && ! sudo pacman -S --needed --noconfirm --asdeps "${deps[@]}" >"$log" 2>&1; then
+    warn "$p: build deps failed; see $log"; return 0
+  fi
+  if ( cd "$work/$p" && makepkg -cf --noconfirm ) >>"$log" 2>&1; then
+    # shellcheck disable=SC2024
+    sudo pacman -U --noconfirm "$work/$p"/*.pkg.tar.* >>"$log" 2>&1 || warn "$p did not install; see $log"
+  else
+    warn "$p did not build (non-fatal); see $log"
+  fi
+}
+
+cmd_update() {
+  need_repo
+  sudo_keepalive
+  cmd_self_update quiet || true
+  ensure_branch
+  fetch_upstream
+  say "syncing Ryoku's dependencies from origin/$channel"
+  cmd_deps --install
+  for p in "${anypkgs[@]}"; do build_any "$p"; done
+  say "handing off to: ryoku update $*"
+  # ryoku update: pre-snapshot, fast-forward the checkout, deploy.sh, doctor,
+  # post-snapshot. RYOKU_WM pins the provider when run outside a session.
+  RYOKU_WM=${RYOKU_WM:-hyprland} exec ryoku update "$@"
+}
+
+cmd_status() {
+  ryoku status || true
+  echo
+  say "aarch64 checks"
+  local head disp type
+  if [[ -d $repo/.git ]]; then
+    head=$(git -C "$repo" symbolic-ref --short --quiet HEAD 2>/dev/null || echo detached)
+    printf '  %-16s %s @ %s\n' checkout "$repo" "$head $(git -C "$repo" rev-parse --short HEAD)"
+  fi
+  disp=$(loginctl show-user "$USER" -p Display --value 2>/dev/null || true)
+  type=$( [[ -n $disp ]] && loginctl show-session "$disp" -p Type --value 2>/dev/null || true)
+  printf '  %-16s %s\n' login-session "${disp:-none} (${type:-?})"
+  [[ $type == wayland || -z $disp ]] || warn "display session is $type, not wayland: log in through SDDM, or polkit will deny the shell"
+  for p in "${anypkgs[@]}"; do
+    printf '  %-16s %s\n' "$p" "$(pacman -Q "$p" 2>/dev/null | awk '{print $2}' || true)"
+  done
+  [[ -n $(pacman -Q "${anypkgs[@]}" 2>&1 >/dev/null) ]] && warn "some arch=any packages are missing: ryoku-arm update"
+  printf '  %-16s %s\n' scripts "$(git -C "$home_share" rev-parse --short HEAD 2>/dev/null || echo 'not installed')"
+}
+
+cmd_self_update() {
+  local quiet=${1:-}
+  if [[ -d $home_share/.git ]]; then
+    git -C "$home_share" pull --quiet --ff-only 2>/dev/null \
+      && [[ -z $quiet ]] && say "scripts at $(git -C "$home_share" rev-parse --short HEAD)"
+  else
+    git clone --quiet --depth 1 https://github.com/jccr/ryoku-aarch64.git "$home_share"
+    [[ -z $quiet ]] && say "scripts installed to $home_share"
+  fi
+  ln -sf "$home_share/ryoku-arm" "$HOME/.local/bin/ryoku-arm"
+}
+
+case ${1:-} in
+  update)      shift; cmd_update "$@" ;;
+  deps)        shift; cmd_deps "$@" ;;
+  status)      cmd_status ;;
+  snapshots)   snapper -c root list ;;
+  rollback)    shift; exec "$home_share/snapshot-rollback.sh" "$@" ;;
+  self-update) cmd_self_update ;;
+  reinstall)   shift; exec "$home_share/ryoku-aarch64.sh" "$@" ;;
+  ""|-h|--help|help) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) die "unknown command: $1 (try ryoku-arm help)" ;;
+esac

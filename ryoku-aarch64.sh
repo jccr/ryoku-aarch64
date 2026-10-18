@@ -102,6 +102,7 @@ pkgs=(
   brightnessctl playerctl mpv mpv-mpris yt-dlp wl-clipboard wl-clip-persist
   cliphist grim slurp cava wf-recorder gpu-screen-recorder wtype zenity
   python uv jq imagemagick matugen ffmpeg curl inotify-tools libqalculate
+  nodejs pacman-contrib
   tesseract tesseract-data-eng zbar ddcutil syntax-highlighting
   pipewire pipewire-pulse wireplumber rtkit upower power-profiles-daemon
   bluez bluez-utils iw nftables pam-u2f polkit gnome-keyring libnotify
@@ -169,8 +170,10 @@ run sudo pacman -Sy
 # ---------------------------------------------------------------- source
 if [[ -d $dir/.git ]]; then
   say "updating $dir"
-  run git -C "$dir" fetch --depth 1 origin "$ref"
-  run git -C "$dir" checkout -q FETCH_HEAD
+  run git -C "$dir" fetch --depth 1 --no-tags origin "+refs/heads/$ref:refs/remotes/origin/$ref"
+  # stay on a real branch: Ryoku's updater only reconciles a rewritten upstream
+  # when HEAD is the channel branch (a detached FETCH_HEAD checkout cannot)
+  run git -C "$dir" checkout -q -B "$ref" "origin/$ref"
 else
   say "cloning ryoku ($ref) into $dir"
   run mkdir -p "$(dirname "$dir")"
@@ -318,10 +321,23 @@ if [[ $ttyfont != none ]]; then
   fi
 fi
 
+# ---------------------------------------------------------------- ryoku-arm
+# The companion CLI: `ryoku-arm update` keeps deps and arch=any packages in step
+# with upstream, then runs Ryoku's own `ryoku update`.
+share="${XDG_DATA_HOME:-$HOME/.local/share}/ryoku-aarch64"
+if [[ -d $share/.git ]]; then
+  run git -C "$share" pull --quiet --ff-only || warn "could not update $share"
+else
+  run git clone --quiet --depth 1 https://github.com/jccr/ryoku-aarch64.git "$share"
+fi
+run mkdir -p "$HOME/.local/bin"
+run ln -sf "$share/ryoku-arm" "$HOME/.local/bin/ryoku-arm"
+say "installed ryoku-arm (update with: ryoku-arm update)"
+
 if ((sddm)); then
   say "done. Reboot; log in at the Ryoku login screen (session: Hyprland)."
 else
   say "done. Log into a Hyprland session (TTY or a display manager)."
 fi
-say "update with:  git -C $dir pull && $dir/ryoku/shell/deploy.sh"
+say "update later with:  ryoku-arm update   (or: ryoku-arm update --system)"
 say "undo pacman.conf with:  sudo cp /etc/pacman.conf.pre-ryoku-aarch64 /etc/pacman.conf"

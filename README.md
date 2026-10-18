@@ -32,3 +32,24 @@ chmod +x snapshots-setup.sh
 
 Keeps the old root as `@.pre-rollback-<timestamp>`; `/home` is untouched.
 Works from the normal system or from a snapshot booted via GRUB.
+
+## Updating: `ryoku-arm`
+
+The installer puts `ryoku-arm` on your PATH. It fills the one gap a source-built
+Ryoku box has on aarch64 (no `[ryoku]` packages to pull in new dependencies),
+then hands off to Ryoku's own CLI.
+
+```sh
+ryoku-arm update            # deps + cursors/fonts from upstream, then `ryoku update`
+ryoku-arm update --system   # same, plus `pacman -Syu` (passed through to ryoku)
+ryoku-arm deps              # what Ryoku's PKGBUILDs want that you're missing
+ryoku-arm status            # `ryoku status` + aarch64 checks (login type, packages)
+ryoku-arm snapshots         # snapper snapshots of /
+ryoku-arm rollback 3        # preview making snapshot 3 the root; add --apply to do it
+ryoku-arm self-update       # refresh these scripts
+```
+
+Dependencies are read from Ryoku's PKGBUILDs on `origin/main` each run, so they
+never drift from upstream. Everything else (`ryoku reload`, `ryoku doctor`,
+`ryoku version`, …) is Ryoku's own CLI and works as-is. Don't use `ryoku
+rollback`: it drives the Limine boot menu, which Asahi doesn't have.
