@@ -115,12 +115,23 @@ cmd_apps() {
   ((${#want[@]})) || { warn "could not read Ryoku's package lists from origin/$channel"; return 0; }
   declare -A repo_has=()
   while IFS= read -r n; do repo_has[$n]=1; done < <(pacman -Slq)
-  local missing=() unavailable=()
+  declare -A is_any=()
+  for p in "${anypkgs[@]}"; do is_any[$p]=1; done
+  local missing=() unavailable=() tobuild=()
   for a in "${want[@]}"; do
     pacman -T "$a" >/dev/null 2>&1 && continue
-    if [[ -n ${repo_has[$a]:-} ]]; then missing+=("$a"); else unavailable+=("$a"); fi
+    if [[ -n ${is_any[$a]:-} ]]; then tobuild+=("$a")
+    elif [[ -n ${repo_has[$a]:-} ]]; then missing+=("$a")
+    else unavailable+=("$a"); fi
   done
   ((${#unavailable[@]})) && warn "in Ryoku's lists but not in your repos (skipped): ${unavailable[*]}"
+  if ((${#tobuild[@]})); then
+    if ((install)); then
+      for a in "${tobuild[@]}"; do build_any "$a"; done
+    else
+      say "built from Ryoku's PKGBUILDs (arch=any): ${tobuild[*]}"
+    fi
+  fi
   if ((${#missing[@]} == 0)); then
     say "all ${#want[@]} applicable Ryoku apps are installed"
     return 0
