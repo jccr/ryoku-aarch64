@@ -191,9 +191,26 @@ for p in "${anypkgs[@]}"; do
   if ((dry)); then printf '  DRY: makepkg -sci in %s\n' "$pkgcache/$p"; continue; fi
   rm -rf "${pkgcache:?}/$p"; mkdir -p "$pkgcache"
   cp -a "$dir/release/packages/$p" "$pkgcache/$p"
-  sudo -v
-  ( cd "$pkgcache/$p" && makepkg -sci --noconfirm --needed ) >"$pkgcache/$p.log" 2>&1 \
-    || warn "$p did not build (non-fatal); see $pkgcache/$p.log"
+  # makepkg never touches privilege here (no -s/-i): it may authenticate its own
+  # way (PACMAN_AUTH), which re-prompted on every package. Deps go in and the
+  # result is installed through this script's sudo instead.
+  pdeps=()
+  while IFS= read -r d; do [[ -n $d ]] && pdeps+=("$d"); done < <(
+    cd "$pkgcache/$p" && bash -c 'source ./PKGBUILD >/dev/null 2>&1
+      printf "%s\n" "${depends[@]}" "${makedepends[@]}"' | sed 's/[<>=].*//')
+  # shellcheck disable=SC2024  # the log is the user's file; only pacman needs root
+  if ((${#pdeps[@]})) && ! sudo pacman -S --needed --noconfirm --asdeps "${pdeps[@]}" >>"$pkgcache/$p.log" 2>&1; then
+    warn "$p: could not install its build deps (${pdeps[*]}); see $pkgcache/$p.log"
+    continue
+  fi
+  if ( cd "$pkgcache/$p" && makepkg -cf --noconfirm ) >>"$pkgcache/$p.log" 2>&1; then
+    built=("$pkgcache/$p"/*.pkg.tar.*)
+    # shellcheck disable=SC2024
+    sudo pacman -U --needed --noconfirm "${built[@]}" >>"$pkgcache/$p.log" 2>&1 \
+      || warn "$p built but did not install; see $pkgcache/$p.log"
+  else
+    warn "$p did not build (non-fatal); see $pkgcache/$p.log"
+  fi
 done
 
 # ---------------------------------------------------------------- build + deploy
