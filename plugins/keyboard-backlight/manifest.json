@@ -1,0 +1,60 @@
+{
+  "id": "keyboard-backlight",
+  "name": "Keyboard Light",
+  "version": "1.0.0",
+  "author": "jccr <jccr@users.noreply.github.com>",
+  "description": "Keyboard backlight slider on the bar, for laptops without keyboard-brightness keys (MacBooks on Asahi).",
+  "license": "MIT",
+  "official": false,
+  "hosts": [
+    "topbarGlyph"
+  ],
+  "entryPoints": {
+    "main": "service/Main.qml",
+    "content": "content/Widget.qml",
+    "panel": "content/Panel.qml"
+  },
+  "panel": {
+    "width": 320
+  },
+  "files": [],
+  "capabilities": {
+    "densities": [
+      "glyph",
+      "full"
+    ]
+  },
+  "defaults": {
+    "host": "topbarGlyph",
+    "bar": {
+      "section": "right"
+    },
+    "icon": "keyboard",
+    "label": "Keyboard Light"
+  },
+  "dependencies": {
+    "commands": [
+      "brightnessctl"
+    ]
+  },
+  "metadata": {
+    "settings": [
+      {
+        "key": "step",
+        "type": "int",
+        "label": "Step for the - / + buttons",
+        "group": "Keyboard Light",
+        "default": 10,
+        "min": 1,
+        "max": 50
+      },
+      {
+        "key": "showPercent",
+        "type": "toggle",
+        "label": "Show the level beside the mark",
+        "group": "Keyboard Light",
+        "default": false
+      }
+    ]
+  }
+}

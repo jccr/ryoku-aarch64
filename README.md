@@ -44,6 +44,7 @@ ryoku-arm update            # deps + cursors/fonts from upstream, then `ryoku up
 ryoku-arm update --system   # same, plus `pacman -Syu` (passed through to ryoku)
 ryoku-arm deps              # what Ryoku's PKGBUILDs want that you're missing
 ryoku-arm status            # `ryoku status` + aarch64 checks (login type, packages)
+ryoku-arm plugins           # install/upgrade the bundled shell plugins that apply here
 ryoku-arm snapshots         # snapper snapshots of /
 ryoku-arm rollback 3        # preview making snapshot 3 the root; add --apply to do it
 ryoku-arm self-update       # refresh these scripts
@@ -53,3 +54,15 @@ Dependencies are read from Ryoku's PKGBUILDs on `origin/main` each run, so they
 never drift from upstream. Everything else (`ryoku reload`, `ryoku doctor`,
 `ryoku version`, …) is Ryoku's own CLI and works as-is. Don't use `ryoku
 rollback`: it drives the Limine boot menu, which Asahi doesn't have.
+
+## Keyboard Light (MacBooks)
+
+`plugins/keyboard-backlight` is a Ryoku shell plugin: a keyboard mark on the bar
+that opens a slider for the keyboard backlight, styled like Ryoku's own
+Brightness panel. The MacBook Air has no keyboard-brightness keys (macOS moved
+it to Control Center), and Ryoku's sidebar only has screen brightness.
+
+On an Apple laptop with a `kbd_backlight` LED, the installer adds it to the bar
+(`--no-kbd-plugin` skips), and `ryoku-arm update` upgrades it. It passes `ryoku
+plugin validate` with no findings; it runs only `brightnessctl`, needs no
+privileges, and has no network access (see its README).

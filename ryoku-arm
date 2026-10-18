@@ -10,6 +10,8 @@
 #   ryoku-arm update [--system]   sync deps + arch=any packages, then `ryoku update`
 #   ryoku-arm deps [--install]    deps Ryoku's PKGBUILDs want that are missing
 #   ryoku-arm status              `ryoku status` + aarch64 checks
+#   ryoku-arm plugins             install/upgrade the bundled shell plugins that
+#                                 apply here (Keyboard Light on Apple laptops)
 #   ryoku-arm snapshots           snapper snapshots of /
 #   ryoku-arm rollback [N] [--apply]   make snapshot N the root again
 #   ryoku-arm self-update         refresh these scripts from jccr/ryoku-aarch64
@@ -135,6 +137,36 @@ build_any() {
   fi
 }
 
+is_apple() { grep -qa apple /proc/device-tree/compatible 2>/dev/null; }
+
+# Bundled Ryoku shell plugins (plugins/<id> in this repo). `ryoku plugin add`
+# refuses an installed id, so an upgrade is remove + add; that drops the bar
+# placement back to the plugin's default lane.
+install_plugin() { # id
+  local id=$1 dir="$home_share/plugins/$1" want have
+  [[ -f $dir/manifest.json ]] || { warn "$id: not in $home_share (run ryoku-arm self-update)"; return 0; }
+  want=$(jq -r .version "$dir/manifest.json")
+  have=$(ryoku plugin list --json 2>/dev/null | jq -r --arg id "$id" '.[]? | select(.id == $id) | .version' || true)
+  if [[ $have == "$want" ]]; then
+    return 0
+  fi
+  if [[ -n $have ]]; then
+    say "upgrading plugin $id $have -> $want"
+    ryoku plugin remove "$id" >/dev/null || { warn "could not remove $id $have"; return 0; }
+  else
+    say "installing plugin $id $want on the bar"
+  fi
+  ryoku plugin add "$dir" --bar --yes || warn "ryoku plugin add $id failed"
+}
+
+cmd_plugins() {
+  # Keyboard Light: Apple laptops whose keyboard has no backlight keys (the Air)
+  # still expose the LED; this puts a native slider on the bar for it.
+  if is_apple && compgen -G '/sys/class/leds/*kbd_backlight*' >/dev/null; then
+    install_plugin keyboard-backlight
+  fi
+}
+
 cmd_update() {
   need_repo
   sudo_keepalive
@@ -144,6 +176,7 @@ cmd_update() {
   say "syncing Ryoku's dependencies from origin/$channel"
   cmd_deps --install
   for p in "${anypkgs[@]}"; do build_any "$p"; done
+  cmd_plugins
   say "handing off to: ryoku update $*"
   # ryoku update: pre-snapshot, fast-forward the checkout, deploy.sh, doctor,
   # post-snapshot. RYOKU_WM pins the provider when run outside a session.
@@ -186,10 +219,11 @@ case ${1:-} in
   update)      shift; cmd_update "$@" ;;
   deps)        shift; cmd_deps "$@" ;;
   status)      cmd_status ;;
+  plugins)     cmd_plugins ;;
   snapshots)   snapper -c root list ;;
   rollback)    shift; exec "$home_share/snapshot-rollback.sh" "$@" ;;
   self-update) cmd_self_update ;;
   reinstall)   shift; exec "$home_share/ryoku-aarch64.sh" "$@" ;;
-  ""|-h|--help|help) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//' ;;
+  ""|-h|--help|help) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command: $1 (try ryoku-arm help)" ;;
 esac

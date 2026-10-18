@@ -33,6 +33,8 @@
 #               sleep/lid inhibitors and its auth agent.
 #   --no-asahi-desktop  on Asahi, skip asahi-desktop-meta (installed after the
 #               desktop: speaker safety, asahi-audio, Asahi Vulkan, widevine).
+#   --no-kbd-plugin  on a MacBook, skip the Keyboard Light bar plugin (a
+#               keyboard-backlight slider; the Air has no backlight keys).
 # Update later:  cd ~/src/ryoku && git pull && ryoku/shell/deploy.sh
 # (do NOT use `ryoku update` — it pulls from the x86_64 repo)
 set -euo pipefail
@@ -45,6 +47,7 @@ lang=en_US.UTF-8
 ttyfont=ter-v32n
 sddm=1
 asahi_desktop=1
+kbd_plugin=1
 while [[ $# -gt 0 ]]; do
   case $1 in
     --ref) ref=$2; shift 2 ;;
@@ -55,6 +58,7 @@ while [[ $# -gt 0 ]]; do
     --tty-font) ttyfont=$2; shift 2 ;;
     --no-sddm) sddm=0; shift ;;
     --no-asahi-desktop) asahi_desktop=0; shift ;;
+    --no-kbd-plugin) kbd_plugin=0; shift ;;
     --fish) fish=1; shift ;;   # accepted for compatibility; already the default
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -364,6 +368,12 @@ fi
 run mkdir -p "$HOME/.local/bin"
 run ln -sf "$share/ryoku-arm" "$HOME/.local/bin/ryoku-arm"
 say "installed ryoku-arm (update with: ryoku-arm update)"
+
+# Bundled shell plugins that apply to this machine: Keyboard Light on a MacBook
+# with a kbd_backlight LED. ryoku-arm decides; it upgrades it on later updates.
+if ((kbd_plugin && is_asahi)); then
+  run "$share/ryoku-arm" plugins || warn "plugin install failed (retry: ryoku-arm plugins)"
+fi
 
 if ((sddm)); then
   say "done. Reboot; log in at the Ryoku login screen (session: Hyprland)."
