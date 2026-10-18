@@ -241,7 +241,8 @@ cmd_seed() {
 
 # Ryoku's AUR set (system/packages/aur.packages), installed after the desktop
 # like ryoku-shell-installer's stepAUR: bootstrap yay-bin, then build each
-# package best-effort. Each one's PKGBUILD arch=() is checked (yay -Gp), so
+# package best-effort. Each one's PKGBUILD arch=() is checked (AUR RPC for the
+# package base, then a shallow clone of it), so
 # x86-only entries (nvibrant-bin, pam-fprint-grosshack) are skipped without a
 # hand-kept list.
 ensure_yay() {
@@ -257,19 +258,18 @@ ensure_yay() {
 }
 
 aur_arch_ok() { # pkg -> 0 builds on aarch64/any, 1 x86-only, 2 not in the AUR
-  # The AUR API has no architecture field (`yay -Si` never shows one for AUR
-  # packages), so read arch=() from the PKGBUILD itself: `yay -Gp` prints it.
-  local pb arch base
-  pb=$(yay -Gp "$1" 2>/dev/null) || pb=""
-  if [[ -z $pb ]]; then
-    # a split package (ttf-fraunces-variable from pkgbase fraunces-font) has no
-    # PKGBUILD under its own name: resolve its PackageBase through the AUR API
-    base=$(curl -fsS --max-time 20 "https://aur.archlinux.org/rpc/v5/info?arg%5B%5D=$1" 2>/dev/null \
-      | jq -r '.results[0].PackageBase // empty' 2>/dev/null) || base=""
-    [[ -n $base && $base != "$1" ]] && { pb=$(yay -Gp "$base" 2>/dev/null) || pb=""; }
-  fi
-  [[ -n $pb ]] || return 2
-  arch=$(printf '%s\n' "$pb" | sed -n 's/^arch=//p' | head -1)
+  # The AUR API has no architecture field, and `yay -Gp` finds no PKGBUILD for
+  # a split package (ttf-fraunces-variable, pkgbase fraunces-font). So: the AUR
+  # RPC gives the PackageBase (no result = not in the AUR), a shallow git clone
+  # of that base gives the PKGBUILD, and its arch=() decides.
+  local base dir arch cache=${XDG_CACHE_HOME:-$HOME/.cache}/ryoku-aarch64/aur
+  base=$(curl -fsS --max-time 20 "https://aur.archlinux.org/rpc/v5/info?arg%5B%5D=$1" 2>/dev/null \
+    | jq -r '.results[0].PackageBase // empty' 2>/dev/null) || base=""
+  [[ -n $base ]] || return 2
+  dir="$cache/$base"
+  rm -rf "$dir"; mkdir -p "$cache"
+  git clone --quiet --depth 1 "https://aur.archlinux.org/$base.git" "$dir" 2>/dev/null || return 0
+  arch=$(sed -n 's/^arch=//p' "$dir/PKGBUILD" 2>/dev/null | head -1) || arch=""
   [[ -n $arch ]] || return 0                  # unparseable: let the build decide
   [[ $arch =~ (^|[^a-z0-9_])(aarch64|any)([^a-z0-9_]|$) ]]
 }
@@ -293,7 +293,7 @@ cmd_aur() {
     esac
   done
   ((${#noarch[@]})) && say "x86-only in the AUR (skipped): ${noarch[*]}"
-  ((${#gone[@]})) && warn "no PKGBUILD found in the AUR (skipped): ${gone[*]}"
+  ((${#gone[@]})) && warn "not in the AUR (skipped): ${gone[*]}"
   if ((${#todo[@]} == 0)); then say "Ryoku's AUR set: nothing left to install"; return 0; fi
   say "Ryoku AUR packages to install (${#todo[@]}): ${todo[*]}"
   if ((!install)); then echo "  install with: ryoku-arm aur --install"; return 0; fi
