@@ -42,6 +42,7 @@ this repo and restarts itself, so new steps apply in the same run.
 | ryoku-any | Ryoku's arch=any packages (cursors, UI fonts, gpk) and source-portable ones (prowl-agent) at their PKGBUILD versions |
 | doctor-apps | Ryoku's doctor doesn't try shipped apps that can't run here |
 | desktop | the desktop is deployed: `deploy.sh` the first time, `ryoku update` after |
+| shell-suspend-fix | ryoku-shell is built with its suspend race fixed (lid suspend works) |
 | asahi-desktop | `asahi-desktop-meta` on Asahi (speaker safety, asahi-audio, Vulkan) |
 | services | bluetooth, rtkit, power-profiles-daemon enabled |
 | login-screen | SDDM with Ryoku's greeter |
@@ -216,6 +217,30 @@ package overwrites it with identical content).
   after v5.0): the processed mic output is labelled `AUX0`, which Quickshell's
   level meter can't map, so the quick-settings mic row floods the shell log
   with `pipewire.peak ... missing channels`. Relabelled `MONO`.
+
+### shell-suspend-fix
+With the lid bound, a close locked the session and then stayed awake.
+`ryoku-clamshell` asked `ryoku-shell` to suspend, and logind refused every
+attempt: "Operation denied due to active block inhibitor". The inhibitor was
+ryoku-shell's own. ryoku-shell holds a sleep block inhibitor and drops it just
+before calling login1 Suspend, but logind forgets a released inhibitor only when
+it dispatches the inhibitor FIFO's hang-up, at `SD_EVENT_PRIORITY_IDLE-10`
+(logind-inhibit.c), after any D-Bus calls already queued. So the Suspend often
+still sees the stale block. A probe on this machine (take a lock, release it,
+ask logind at once) got the stale answer 12 times in 20; with the lid shut,
+every lid suspend lost. It's a race in ryoku-shell, not anything Asahi-specific.
+
+`fragments/ryoku-shell/suspend-after-release.patch` retries Suspend for up to
+login1CallWait (2 s) while the refusal is `BlockedByInhibitorLock`, and only
+then; any other error returns at once. It includes Go tests for both. The step
+exports `ryoku/shell/ipc` from the deployed checkout, applies the patch, builds
+it the way deploy.sh does (`go build`), and swaps `~/.local/bin/ryoku-shell` in
+by rename; the checkout is never modified. Each deploy rebuilds ryoku-shell, so
+the step runs after the desktop step and skips while its own build is in
+place. Once upstream has a fix (`suspendAfterRelease` in sleepwake.go) it skips
+for good; if the file changes so the patch no longer applies, it warns. The
+shell restarts to load the new daemon, but never while the session is locked
+or the lid is shut.
 
 ### lid
 On a MacBook, closing the lid did nothing: the panel stayed on and the machine

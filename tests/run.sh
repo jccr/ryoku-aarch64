@@ -28,7 +28,7 @@ export HOME=$S/home XDG_CONFIG_HOME=$S/home/.config XDG_DATA_HOME=$S/home/.local
 export FAKE_DIR=$S/fake FAKE_BIN=$S/fakebin FAKE_LOG=$S/fake/log
 export RYOKU_ARM_SHARE=$ARM RYOKU_ARM_SELF_UPDATE=0 RYOKU_ARM_PACMAN_CONF=$S/pacman.conf
 mkdir -p "$HOME/.local/bin" "$FAKE_DIR" "$FAKE_BIN" "$XDG_CONFIG_HOME/hypr"
-for c in sudo pacman makepkg systemctl ryoku curl loginctl yay usermod snapper locale-gen localectl update-desktop-database; do
+for c in sudo pacman makepkg systemctl ryoku curl go loginctl yay usermod snapper locale-gen localectl update-desktop-database; do
   ln -s "$T/fake" "$FAKE_BIN/$c"
 done
 # drop the real ~/.local/bin (the live Ryoku tools) from PATH; fakes first
@@ -38,6 +38,8 @@ export PATH=$FAKE_BIN:$(tr ':' '\n' <<<"$PATH" | grep -vxF "$(getent passwd "$US
 # the deployed desktop: a fake ryoku CLI, the real clamshell script (patched
 # by keep-awake-lid), hypr user.lua
 ln -s "$T/fake" "$HOME/.local/bin/ryoku"
+printf '#!/bin/sh\necho stock ryoku-shell\n' > "$HOME/.local/bin/ryoku-shell"; chmod +x "$HOME/.local/bin/ryoku-shell"
+export RYOKU_ARM_GO=$FAKE_BIN/go
 cp "$UPSTREAM/system/hardware/power/ryoku-clamshell" "$HOME/.local/bin/ryoku-clamshell"
 [[ -x $UPSTREAM/system/hardware/power/ryoku-hw-laptop ]] && cp "$UPSTREAM/system/hardware/power/ryoku-hw-laptop" "$HOME/.local/bin/"
 printf -- '-- your overrides\n' > "$XDG_CONFIG_HOME/hypr/user.lua"
@@ -59,7 +61,7 @@ tree_sum() { (cd "$HOME" && find . -type f -not -path './.cache/*' -print0 | sor
 echo "== commands"
 arm help;            check "help exits 0"                 test "$RC" -eq 0
 check "help lists choices"  has "--no-keep-awake-lid"
-arm debug steps;     check "debug steps lists 19 steps"   test "$(grep -c '^  [a-z]' <<<"$OUT")" -eq 19
+arm debug steps;     check "debug steps lists 20 steps"   test "$(grep -c '^  [a-z]' <<<"$OUT")" -eq 20
 arm frobnicate;      check "unknown command fails"        test "$RC" -ne 0
 arm install --bogus; check "unknown option fails"         test "$RC" -ne 0
 
@@ -93,6 +95,8 @@ check "lid: user.lua has the lid block" grep -q 'ryoku-aarch64 lid begin' "$XDG_
 check "lid: user's own lines kept" grep -qx -- '-- your overrides' "$XDG_CONFIG_HOME/hypr/user.lua"
 check "keep-awake-lid: clamshell patched" grep -q 'keep_awake_on; then keep_awake_close' "$HOME/.local/bin/ryoku-clamshell"
 check "keep-awake-lid: patched clamshell parses" bash -n "$HOME/.local/bin/ryoku-clamshell"
+check "shell-suspend-fix: ryoku-shell rebuilt from patched source" grep -q 'fixed=yes' "$HOME/.local/bin/ryoku-shell"
+check "shell-suspend-fix: checkout left untouched" test -z "$(git -C "$S/ryoku" status --porcelain)"
 check "login-screen skipped (--no-sddm)" bash -c "! grep -qE '^sudo .*(sddm|qylock)' '$FAKE_LOG'"
 check "aur skipped (--no-aur)" bash -c "! grep -q '^curl' '$FAKE_LOG'"
 
@@ -105,6 +109,13 @@ check "update honours saved --no-aur" bash -c "! grep -q '^curl' '$FAKE_LOG'"
 check "no files changed" test "$(tree_sum)" == "$sum"
 check "nothing rebuilt" bash -c "! grep -q '^makepkg' '$FAKE_LOG'"
 check "no package installs" bash -c "! grep -q 'pacman -Syu' '$FAKE_LOG'"
+
+echo "== deploy re-lays ryoku-shell: the fix is rebuilt"
+printf '#!/bin/sh\necho stock ryoku-shell\n' > "$HOME/.local/bin/ryoku-shell"
+arm debug step shell-suspend-fix
+check "rebuilt after a deploy replaced it" grep -q 'fixed=yes' "$HOME/.local/bin/ryoku-shell"
+: > "$FAKE_LOG"; arm debug step shell-suspend-fix
+check "our build in place: no rebuild" bash -c "! grep -q '^go ' '$FAKE_LOG'"
 
 echo "== choices flip both ways"
 arm debug step lid keep-awake-lid --dry-run

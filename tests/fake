@@ -54,5 +54,10 @@ case $name in
     esac
     exit 0 ;;
   curl) exit 22 ;;   # the AUR is unreachable: aur reports "not in the AUR"
+  go)                # "build": write a stand-in binary to -o, stamped with the patch state
+    out=""; while (($#)); do [[ $1 == -o ]] && out=$2; shift; done
+    fixed=no; grep -q suspendAfterRelease sleepwake.go 2>/dev/null && fixed=yes
+    printf '#!/bin/sh\necho "ryoku-shell built fixed=%s"\n' "$fixed" > "$out"
+    exit 0 ;;
   *) exit 0 ;;
 esac

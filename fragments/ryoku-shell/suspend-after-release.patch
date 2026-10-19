@@ -1,0 +1,101 @@
+diff --git a/ryoku/shell/ipc/sleepwake.go b/ryoku/shell/ipc/sleepwake.go
+index f03fd44..cb01383 100644
+--- a/ryoku/shell/ipc/sleepwake.go
++++ b/ryoku/shell/ipc/sleepwake.go
+@@ -490,7 +490,7 @@ func (s *sleepCycle) requestSuspendContext(requestCtx context.Context) error {
+ 	s.block.release()
+ 	ctx, cancel := context.WithTimeout(requestCtx, login1CallWait)
+ 	defer cancel()
+-	if err := s.suspend(ctx); err != nil {
++	if err := s.suspendAfterRelease(ctx); err != nil {
+ 		if !s.protectLocked() {
+ 			s.logf("ryoku-shell: suspend failed and sleep protection could not be restored")
+ 			s.requestProtectionRetry()
+@@ -500,6 +500,34 @@ func (s *sleepCycle) requestSuspendContext(requestCtx context.Context) error {
+ 	return nil
+ }
+ 
++// login1BlockedByInhibitor is the D-Bus error logind returns when a block
++// inhibitor stands in the way of Suspend.
++const login1BlockedByInhibitor = "org.freedesktop.login1.BlockedByInhibitorLock"
++
++// suspendRetryStep paces suspendAfterRelease's retries.
++const suspendRetryStep = 20 * time.Millisecond
++
++// suspendAfterRelease calls login1 Suspend right after this daemon dropped its
++// own block inhibitor. logind forgets a released inhibitor only when it
++// dispatches the inhibitor FIFO's hang-up, at SD_EVENT_PRIORITY_IDLE-10, i.e.
++// after the D-Bus calls already queued: a Suspend sent at once often still sees
++// our own block and is refused with BlockedByInhibitorLock. Retry while that is
++// the refusal, within ctx (login1CallWait); any other error returns at once.
++func (s *sleepCycle) suspendAfterRelease(ctx context.Context) error {
++	for {
++		err := s.suspend(ctx)
++		var dbusErr dbus.Error
++		if err == nil || !errors.As(err, &dbusErr) || dbusErr.Name != login1BlockedByInhibitor {
++			return err
++		}
++		select {
++		case <-ctx.Done():
++			return err
++		case <-time.After(suspendRetryStep):
++		}
++	}
++}
++
+ type login1SessionInfo struct {
+ 	ID   string
+ 	UID  uint32
+diff --git a/ryoku/shell/ipc/sleepwake_test.go b/ryoku/shell/ipc/sleepwake_test.go
+index 5e9c262..97a2c16 100644
+--- a/ryoku/shell/ipc/sleepwake_test.go
++++ b/ryoku/shell/ipc/sleepwake_test.go
+@@ -1232,3 +1232,48 @@ func TestUnlockFallbackGuardReleasedOnlyByReadyOwningSession(t *testing.T) {
+ 		t.Fatal("unlock fallback watcher stopped after its first guard")
+ 	}
+ }
++
++func TestSuspendRetriesWhileLogindStillSeesReleasedBlock(t *testing.T) {
++	calls := 0
++	cycle := &sleepCycle{
++		delay: &fakeSleepInhibitor{heldState: true, max: 15 * time.Second},
++		block: &fakeSleepInhibitor{heldState: true},
++		lock:  func(time.Time) error { return nil },
++		suspend: func(context.Context) error {
++			calls++
++			if calls < 3 {
++				return dbus.Error{Name: login1BlockedByInhibitor, Body: []any{"Operation denied due to active block inhibitor"}}
++			}
++			return nil
++		},
++		now:  time.Now,
++		logf: func(string, ...any) {},
++	}
++	if err := cycle.requestSuspend(); err != nil {
++		t.Fatalf("suspend failed although logind accepted it on retry: %v", err)
++	}
++	if calls != 3 {
++		t.Fatalf("suspend calls = %d, want 3 (two stale refusals, then success)", calls)
++	}
++}
++
++func TestSuspendDoesNotRetryOtherLogin1Errors(t *testing.T) {
++	calls := 0
++	cycle := &sleepCycle{
++		delay: &fakeSleepInhibitor{heldState: true, max: 15 * time.Second},
++		block: &fakeSleepInhibitor{heldState: true},
++		lock:  func(time.Time) error { return nil },
++		suspend: func(context.Context) error {
++			calls++
++			return dbus.Error{Name: "org.freedesktop.DBus.Error.AccessDenied"}
++		},
++		now:  time.Now,
++		logf: func(string, ...any) {},
++	}
++	if err := cycle.requestSuspend(); err == nil {
++		t.Fatal("an access-denied suspend was reported as success")
++	}
++	if calls != 1 {
++		t.Fatalf("suspend calls = %d, want 1 (no retry for other errors)", calls)
++	}
++}
