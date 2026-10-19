@@ -1,0 +1,12 @@
+# Ryoku packages that build on aarch64 from Ryoku's own PKGBUILDs: pure data
+# (cursors, fonts, oh-my-zsh, blesh, udev rules) and gpk, whose PKGBUILD
+# carries the official arm64 binary. gpk and ryoku-oh-my-zsh are hard deps of
+# ryoku-desktop. Rebuilt whenever the PKGBUILD's version moves.
+ryoku-cursors
+ryoku-cursor-material
+otf-space-grotesk
+ttf-maple-mono-nf
+blesh
+game-devices-udev
+gpk
+ryoku-oh-my-zsh

@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Fake system commands for the test sandbox. One script, linked under each
+# name: it logs every call to $FAKE_LOG and never touches the real system.
+# sudo logs and runs its command only when that command is itself a fake
+# (pacman), so `sudo pacman -U` still records an install; anything else
+# (cp, sed, systemctl on /etc) is logged and skipped.
+#
+# State (files under $FAKE_DIR):
+#   missing     package names pacman reports as not installed
+#   versions    "name version" lines recorded by pacman -U
+name=${0##*/}
+printf '%s %s\n' "$name" "$*" >> "$FAKE_LOG"
+in_missing() { [[ -f $FAKE_DIR/missing ]] && grep -qxF -- "$1" "$FAKE_DIR/missing"; }
+version_of() { awk -v p="$1" '$1 == p {v = $2} END {print (v == "" ? "0-0" : v)}' "$FAKE_DIR/versions" 2>/dev/null || echo 0-0; }
+
+case $name in
+  sudo)
+    [[ ${1:-} == pacman ]] && exec "$FAKE_BIN/pacman" "${@:2}"
+    exit 0 ;;
+  pacman)
+    case ${1:-} in
+      -Slq) cat "$FAKE_DIR/missing" 2>/dev/null; echo filesystem ;;
+      -T) shift; for p; do in_missing "$p" && { echo "$p"; exit 127; }; done ;;
+      -Q|-Qq)
+        mode=$1; shift
+        for p; do in_missing "$p" && exit 1; done
+        for p; do if [[ $mode == -Q ]]; then echo "$p $(version_of "$p")"; else echo "$p"; fi; done ;;
+      -U)
+        for f; do
+          [[ $f == *.pkg.tar.* ]] || continue
+          b=${f##*/}; b=${b%-any.pkg.tar.*}       # name-ver-rel
+          rel=${b##*-}; b=${b%-*}; ver=${b##*-}; pkg=${b%-*}
+          echo "$pkg $ver-$rel" >> "$FAKE_DIR/versions"
+        done ;;
+    esac
+    exit 0 ;;
+  makepkg)
+    # "build" the PKGBUILD in the cwd into an empty package file
+    # shellcheck source=/dev/null
+    ( source ./PKGBUILD >/dev/null 2>&1; touch "${pkgname[0]}-$pkgver-$pkgrel-any.pkg.tar.zst" )
+    exit 0 ;;
+  systemctl)
+    # no live user session: nothing is active; every unit is enabled
+    for a; do [[ $a == is-active ]] && exit 3; done
+    exit 0 ;;
+  ryoku)
+    case "${1:-} ${2:-}" in
+      "plugin list") cat "$FAKE_DIR/plugins" 2>/dev/null || echo '[]' ;;
+      "plugin add") echo '[{"id":"keyboard-backlight","version":"'"$(jq -r .version "$3/manifest.json")"'"}]' > "$FAKE_DIR/plugins" ;;
+      "plugin remove") echo '[]' > "$FAKE_DIR/plugins" ;;
+      "status "*) echo "fake ryoku status" ;;
+    esac
+    exit 0 ;;
+  curl) exit 22 ;;   # the AUR is unreachable: aur reports "not in the AUR"
+  *) exit 0 ;;
+esac

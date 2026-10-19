@@ -1,0 +1,13 @@
+# Ryoku's desktop PKGBUILDs (release/packages/<name>) whose depends and
+# makedepends make up the desktop: what the ryoku-desktop package pulls in on
+# x86. deploy.sh builds the packages themselves into ~/.local.
+ryoku-desktop
+ryoku-desktop-hyprland
+ryoku-shell
+ryogami
+ryoku-blobs
+ryoku-hub
+ryoku
+ryoku-keysounds
+ryoku-rashin
+ryoku-palette-bridge

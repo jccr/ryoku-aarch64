@@ -1,4 +1,4 @@
-# ryoku-aarch64 keep-awake begin (laid by ryoku-arm lid; see its README)
+# ryoku-aarch64 keep-awake begin (laid by ryoku-arm, step keep-awake-lid)
 # Keep awake (the bar/quick-settings toggle, ryoku-cmd-caffeine) holds an
 # idle:sleep inhibitor, but logind ignores a user's own inhibitors when that
 # user asks to suspend, so Ryoku's lid suspend went straight through it. While

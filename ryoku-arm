@@ -1,675 +1,163 @@
 #!/usr/bin/env bash
-# ryoku-arm — the aarch64 companion to Ryoku's own `ryoku` CLI.
+# ryoku-arm: install and keep the Ryoku desktop current on aarch64 (Asahi).
 #
-# A source-built (checkout) Ryoku box updates through `ryoku update`, which
-# snapshots, fast-forwards the checkout, redeploys and runs the doctor. What it
-# cannot do on aarch64 is what the [ryoku] packages do on x86: pull in new
-# pacman dependencies and the arch=any Ryoku packages (cursors, UI fonts).
-# ryoku-arm fills exactly that gap and hands everything else to `ryoku`.
+# Upstream Ryoku ships x86_64 packages only. This builds it from a source
+# checkout and fills what the [ryoku] packages do on x86 (dependencies, the
+# arch=any packages, configs a checkout deploy misses), then hands the desktop
+# itself to Ryoku's own `ryoku update`. install and update run the same
+# ordered, idempotent steps (steps/NN-*.sh); each checks the machine and acts
+# only where it differs from what the saved choices ask for.
 #
-#   ryoku-arm update [--system]   sync deps + arch=any packages, then `ryoku update`
-#   ryoku-arm deps [--install]    deps Ryoku's PKGBUILDs want that are missing
-#   ryoku-arm status              `ryoku status` + aarch64 checks
-#   ryoku-arm plugins             install/upgrade what applies here: Keyboard
-#                                 Light on Apple laptops (bar plugin + a row in
-#                                 quick settings, re-applied after each deploy)
-#   ryoku-arm apps [--install]    Ryoku's preinstalled apps (base + dev lists)
-#                                 that your repos carry, minus kernel/boot
-#   ryoku-arm aur [--install]     Ryoku's AUR set (aur.packages) that supports
-#                                 aarch64, via yay (bootstrapped if missing)
-#   ryoku-arm seed                lay what a checkout install misses (LazyVim,
-#                                 Starship, Yazi, wallpapers, ...) and enable the
-#                                 session units (ryogami, ryoku-idle, ...)
-#   ryoku-arm asahi-fixes         apply upstream Asahi fixes not yet released
-#                                 (asahi-audio: mic MONO position, ab1b469)
-#   ryoku-arm lid                 bind this laptop's lid switch (Apple SMC) to
-#                                 Ryoku's clamshell policy in hypr/user.lua, and
-#                                 keep a lid close awake while Keep awake is on
-#   ryoku-arm snapshots           snapper snapshots of /
-#   ryoku-arm rollback [N] [--apply]   make snapshot N the root again
-#   ryoku-arm self-update         refresh these scripts from jccr/ryoku-aarch64
-#   ryoku-arm reinstall [args]    rerun ryoku-aarch64.sh (full install path)
-#
-# Dependencies are read from Ryoku's PKGBUILDs on origin/main at run time, so
-# this never drifts from upstream the way a hand-kept list does.
+# Layout: lib/ shared helpers, steps/ one step per file (NN = order),
+# packages/ package lists (data), fragments/ text inserted into Ryoku's files,
+# plugins/ bundled shell plugins, tests/ the sandboxed test suite.
 set -euo pipefail
 
-home_share="${XDG_DATA_HOME:-$HOME/.local/share}/ryoku-aarch64"
-repo="${RYOKU_REPO:-$HOME/src/ryoku}"
-channel=main
+ARM_DIR=$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")" && pwd)
+for lib in log env choices upstream pkg blocks steps; do
+  # shellcheck source=/dev/null
+  source "$ARM_DIR/lib/$lib.sh"
+done
+load_steps
 
-say()  { printf '\033[1m==>\033[0m %s\n' "$*"; }
-warn() { printf '\033[33m  !\033[0m %s\n' "$*" >&2; }
-die()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+usage() {
+  cat <<'EOF'
+Usage: ryoku-arm <command> [options]
 
-[[ $EUID -ne 0 ]] || die "run as your normal user"
-[[ ":$PATH:" == *":$HOME/.local/bin:"* ]] || export PATH="$HOME/.local/bin:$PATH"
+  install [choices]           install Ryoku (what ryoku-aarch64.sh runs)
+  update [choices] [--system] bring everything current; --system also runs
+                              pacman -Syu (passed to `ryoku update`)
+  status                      `ryoku status`, aarch64 checks, saved choices
+  snapshots                   snapper snapshots of /
+  rollback [N] [--apply]      make snapshot N the root again
+  help                        this help (`ryoku-arm debug` for internals)
 
-# Ryoku packages that build on aarch64 from Ryoku's own PKGBUILDs: pure data
-# (cursors, fonts, oh-my-zsh, blesh, udev rules) and gpk, whose PKGBUILD carries
-# the official arm64 binary. gpk and ryoku-oh-my-zsh are ryoku-desktop hard deps.
-anypkgs=(ryoku-cursors ryoku-cursor-material otf-space-grotesk ttf-maple-mono-nf blesh game-devices-udev gpk ryoku-oh-my-zsh)
-# Packages the PKGBUILDs name that must never be installed here: the generic
-# kernel's headers/dkms (Asahi runs linux-asahi) and virtual provides.
-skip_re='^(linux-headers|dkms|ryoku-desktop-compositor|limine.*|asusctl)$'
-# The PKGBUILDs whose deps make up the desktop (what ryoku-desktop pulls in).
-desktop_pkgs=(ryoku-desktop ryoku-desktop-hyprland ryoku-shell ryogami ryoku-blobs
-              ryoku-hub ryoku ryoku-keysounds ryoku-rashin ryoku-palette-bridge)
-
-sudo_keepalive() {
-  sudo -v || die "sudo is required"
-  ( while kill -0 "$$" 2>/dev/null; do sudo -n true 2>/dev/null; sleep 50; done ) &
-  keepalive_pid=$!
-  trap 'kill "$keepalive_pid" 2>/dev/null' EXIT
+install and update take --dry-run (print the plan, change nothing) and these
+choices (every on/off one is on unless you pass --no-X; --X turns it back on),
+saved and honoured by every later run:
+EOF
+  choices_help
 }
 
-need_repo() {
-  [[ -d $repo/.git ]] || die "no Ryoku checkout at $repo (set RYOKU_REPO, or run ryoku-arm reinstall)"
+debug_usage() {
+  cat <<'EOF'
+Usage: ryoku-arm debug <command>   (internal, for debugging)
+
+  steps                       the ordered step list
+  step <name>... [--dry-run]  run only these steps, with the saved choices
+  choices                     the saved (or inferred) choices
+  self-update                 pull this port from jccr/ryoku-aarch64
+EOF
 }
 
-# Keep the checkout on a real `main` branch. Ryoku's updater fast-forwards any
-# HEAD, but only reconciles a rewritten upstream when HEAD is the channel branch;
-# older ryoku-aarch64.sh runs left it detached.
-ensure_branch() {
-  local head
-  head=$(git -C "$repo" symbolic-ref --short --quiet HEAD 2>/dev/null || true)
-  if [[ $head != "$channel" ]]; then
-    say "putting $repo back on branch $channel (was ${head:-detached})"
-    git -C "$repo" checkout -q -B "$channel"
-  fi
-  git -C "$repo" config "branch.$channel.remote" origin
-  git -C "$repo" config "branch.$channel.merge" "refs/heads/$channel"
-}
-
-fetch_upstream() {
-  GIT_TERMINAL_PROMPT=0 git -C "$repo" fetch --quiet --no-tags origin \
-    "+refs/heads/$channel:refs/remotes/origin/$channel" \
-    || warn "could not reach origin; using the last fetched origin/$channel"
-}
-
-# Print one PKGBUILD field (array) from origin/main without touching the
-# working tree. PKGBUILDs are shell; they come from the same repo deploy.sh runs.
-pkgbuild_field() { # pkg field...
-  local pkg=$1; shift
-  git -C "$repo" show "origin/$channel:release/packages/$pkg/PKGBUILD" 2>/dev/null \
-    | bash -c 'source /dev/stdin >/dev/null 2>&1; for f in "$@"; do eval "printf \"%s\\n\" \"\${$f[@]}\""; done' _ "$@"
-}
-
-wanted_deps() {
-  local own
-  own=$(git -C "$repo" ls-tree --name-only "origin/$channel:release/packages/" 2>/dev/null) || own=""
-  for p in "${desktop_pkgs[@]}"; do pkgbuild_field "$p" depends makedepends; done \
-    | sed 's/[<>=].*//' | grep . | sort -u \
-    | grep -vxF -f <(printf '%s\n' "$own") | grep -vE "$skip_re" || true
-}
-
-# Ryoku's preinstalled set (docs/preinstalled.md) lives in system/packages/:
-# base.packages (system + apps) and dev.packages (toolchains). hardware.packages
-# is x86 GPU drivers/microcode and aur.packages mostly x86 -bin builds, so both
-# are skipped. Never installed here, whatever the lists say: the generic kernel
-# and headers (Asahi boots linux-asahi), the Limine/initramfs/boot chain and
-# snapshot stack (set up separately), and network managers (would change how
-# this machine gets online).
-apps_skip_re='^(base|base-devel|linux|linux-firmware|linux-headers|linux-.*-headers|dkms|mkinitcpio|sudo|btrfs-progs|cryptsetup|dosfstools|efibootmgr|limine.*|plymouth|snapper|snap-pac|networkmanager|iwd|wpa_supplicant|xpadneo-dkms|broadcom-.*|.*-ucode)$'
-
-wanted_apps() {
-  for list in base dev; do
-    git -C "$repo" show "origin/$channel:system/packages/$list.packages" 2>/dev/null
-  done | sed -e 's/#.*//' -e 's/[[:space:]]//g' | grep . | sort -u | grep -vE "$apps_skip_re" || true
-}
-
-cmd_apps() {
-  need_repo; fetch_upstream
-  local install=0; [[ ${1:-} == --install ]] && install=1
-  mapfile -t want < <(wanted_apps)
-  ((${#want[@]})) || { warn "could not read Ryoku's package lists from origin/$channel"; return 0; }
-  declare -A repo_has=()
-  while IFS= read -r n; do repo_has[$n]=1; done < <(pacman -Slq)
-  declare -A is_any=()
-  for p in "${anypkgs[@]}"; do is_any[$p]=1; done
-  local missing=() unavailable=() tobuild=()
-  for a in "${want[@]}"; do
-    pacman -T "$a" >/dev/null 2>&1 && continue
-    if [[ -n ${is_any[$a]:-} ]]; then tobuild+=("$a")
-    elif [[ -n ${repo_has[$a]:-} ]]; then missing+=("$a")
-    else unavailable+=("$a"); fi
-  done
-  ((${#unavailable[@]})) && warn "in Ryoku's lists but not in your repos (skipped): ${unavailable[*]}"
-  ((${#tobuild[@]})) && say "built from Ryoku's PKGBUILDs (arch=any): ${tobuild[*]}"
-  if ((${#missing[@]} + ${#tobuild[@]} == 0)); then
-    say "all ${#want[@]} applicable Ryoku apps are installed"
-    return 0
-  fi
-  ((${#missing[@]})) && say "Ryoku apps not installed yet (${#missing[@]}): ${missing[*]}"
-  if ((!install)); then
-    echo "  install with: ryoku-arm apps --install"
-    return 0
-  fi
-  # repo apps first: a failed source build must never block Chromium & co.
-  if ((${#missing[@]})); then
-    sudo pacman -S --needed --noconfirm "${missing[@]}" || warn "pacman could not install some apps (see above)"
-  fi
-  for a in "${tobuild[@]}"; do build_any "$a" || warn "$a did not build"; done
-}
-
-# What a packaged Ryoku box gets that a checkout's deploy.sh never lays: the
-# ryoku-desktop PKGBUILD stages nvim (LazyVim), starship.toml and yazi.toml for
-# `ryoku materialize`, and ryoku-shell-installer seeds wallpapers, ~/.npmrc and
-# a few .desktop entries. Ryoku-owned files are refreshed only while they still
-# match what this tool laid last time (a sha in the state dir), so a file you
-# edited is never clobbered; seeds are copied only when absent.
-seed_state="${XDG_STATE_HOME:-$HOME/.local/state}/ryoku-aarch64/seeded"
-
-lay_owned() { # src dst: copy if absent, or if unchanged since we last laid it
-  local src=$1 dst=$2 rec cur new
-  [[ -f $src ]] || return 0
-  rec="$seed_state/${dst#"$HOME"/}.sha"
-  new=$(sha256sum < "$src" | cut -d' ' -f1)
-  if [[ -e $dst ]]; then
-    cur=$(sha256sum < "$dst" | cut -d' ' -f1)
-    [[ $cur == "$new" ]] && { mkdir -p "${rec%/*}"; echo "$new" > "$rec"; return 0; }
-    if [[ ! -f $rec || $(cat "$rec") != "$cur" ]]; then
-      warn "kept your edited ${dst/#"$HOME"/\~} (Ryoku's version: $src)"
-      return 0
-    fi
-  fi
-  mkdir -p "${dst%/*}" "${rec%/*}"
-  cp -f "$src" "$dst"; echo "$new" > "$rec"
-  seeded_n=$((seeded_n + 1))
-}
-
-# Ryoku's session pulls its daemons in through ryoku-session.target: every user
-# unit with WantedBy=ryoku-session.target (ryoku-shell, ryogami the wallpaper
-# daemon, ryoku-idle, ryoku-clamshell) must be ENABLED for the target to start
-# it. deploy.sh lays the unit files but never enables them (the package and
-# `ryoku doctor` do). On a checkout box ryoku-shell and ryogami still ran (a
-# power helper restarts them by name), but ryoku-idle and ryoku-clamshell
-# didn't: no idle lock, no lid policy.
-enable_session_units() {
-  local udir=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user u units=() off=()
-  [[ -d $udir ]] || return 0
-  for u in "$udir"/*.service; do
-    [[ -f $u ]] && grep -qE '^WantedBy=.*\bryoku-session\.target\b' "$u" && units+=("${u##*/}")
-  done
-  ((${#units[@]})) || return 0
-  systemctl --user daemon-reload 2>/dev/null || true
-  for u in "${units[@]}"; do
-    [[ $(systemctl --user is-enabled "$u" 2>/dev/null) == enabled ]] || off+=("$u")
-  done
-  ((${#off[@]})) || return 0
-  say "enabling Ryoku session units: ${off[*]}"
-  systemctl --user enable "${off[@]}" || { warn "could not enable ${off[*]}"; return 0; }
-  if systemctl --user is-active --quiet ryoku-session.target; then
-    systemctl --user start "${off[@]}" 2>/dev/null \
-      && say "started them in the running session" \
-      || warn "enabled; some did not start now (they will at the next login)"
-  fi
-}
-
-cmd_seed() {
-  need_repo
-  local r=$repo/ryoku cfg=${XDG_CONFIG_HOME:-$HOME/.config} f rel
-  local apps=${XDG_DATA_HOME:-$HOME/.local/share}/applications
-  seeded_n=0
-  # LazyVim: only into an empty ~/.config/nvim or one Ryoku already owns
-  # (.ryoku-lazyvim marker); never over someone else's Neovim config.
-  local nvim_entries=()
-  [[ -d $cfg/nvim ]] && mapfile -t nvim_entries < <(find "$cfg/nvim" -mindepth 1 -maxdepth 1)
-  if [[ ! -e $cfg/nvim || -f $cfg/nvim/.ryoku-lazyvim || ${#nvim_entries[@]} -eq 0 ]]; then
-    lay_owned "$r/apps/nvim/init.lua" "$cfg/nvim/init.lua"
-    lay_owned "$r/apps/nvim/.ryoku-lazyvim" "$cfg/nvim/.ryoku-lazyvim"
-    while IFS= read -r -d '' f; do
-      rel=${f#"$r/apps/nvim/"}; lay_owned "$f" "$cfg/nvim/$rel"
-    done < <(find "$r/apps/nvim/lua" -type f -print0)
-  else
-    warn "$cfg/nvim is your own Neovim config; skipped Ryoku's LazyVim"
-  fi
-  lay_owned "$r/apps/starship/starship.toml" "$cfg/starship.toml"
-  lay_owned "$r/apps/yazi/yazi.toml" "$cfg/yazi/yazi.toml"
-  # launcher entries the package ships system-wide
-  lay_owned "$r/apps/nvim/ryoku-nvim.desktop" "$apps/ryoku-nvim.desktop"
-  lay_owned "$r/apps/tools/compress-video.desktop" "$apps/compress-video.desktop"
-  lay_owned "$r/apps/tools/install-app.desktop" "$apps/install-app.desktop"
-  # installer seeds: only when absent
-  [[ -e $HOME/.npmrc ]] || { cp "$r/apps/npm/npmrc" "$HOME/.npmrc" && seeded_n=$((seeded_n + 1)); }
-  local wp=${XDG_PICTURES_DIR:-$HOME/Pictures}/Wallpapers
-  if [[ ! -d $wp ]] || [[ -z $(ls -A "$wp" 2>/dev/null) ]]; then
-    mkdir -p "$wp"; cp -a "$r/assets/wallpapers/." "$wp/" && seeded_n=$((seeded_n + 1))
-    say "seeded Ryoku's wallpapers -> ${wp/#"$HOME"/\~}"
-  fi
-  command -v update-desktop-database >/dev/null && update-desktop-database -q "$apps" 2>/dev/null || true
-  enable_session_units
-  if ((seeded_n)); then say "laid $seeded_n Ryoku config file(s)/seed(s) a checkout deploy misses"; else say "Ryoku configs and seeds are current"; fi
-}
-
-# Ryoku's AUR set (system/packages/aur.packages), installed after the desktop
-# like ryoku-shell-installer's stepAUR: bootstrap yay-bin, then build each
-# package best-effort. Each one's PKGBUILD arch=() is checked (AUR RPC for the
-# package base, then a shallow clone of it), so
-# x86-only entries (nvibrant-bin, pam-fprint-grosshack) are skipped without a
-# hand-kept list.
-ensure_yay() {
-  command -v yay >/dev/null && return 0
-  say "bootstrapping yay (AUR helper)"
-  local tmp; tmp=$(mktemp -d)
-  if git clone --quiet --depth 1 https://aur.archlinux.org/yay-bin.git "$tmp/yay-bin" \
-     && ( cd "$tmp/yay-bin" && makepkg -cf --noconfirm >/dev/null ) \
-     && sudo pacman -U --noconfirm "$tmp"/yay-bin/yay-bin-*.pkg.tar.*; then
-    rm -rf "$tmp"; return 0
-  fi
-  rm -rf "$tmp"; warn "could not bootstrap yay"; return 1
-}
-
-aur_arch_ok() { # pkg -> 0 builds on aarch64/any, 1 x86-only, 2 not in the AUR
-  # The AUR API has no architecture field, and `yay -Gp` finds no PKGBUILD for
-  # a split package (ttf-fraunces-variable, pkgbase fraunces-font). So: the AUR
-  # RPC gives the PackageBase (no result = not in the AUR), a shallow git clone
-  # of that base gives the PKGBUILD, and its arch=() decides.
-  local base dir arch cache=${XDG_CACHE_HOME:-$HOME/.cache}/ryoku-aarch64/aur
-  base=$(curl -fsS --max-time 20 "https://aur.archlinux.org/rpc/v5/info?arg%5B%5D=$1" 2>/dev/null \
-    | jq -r '.results[0].PackageBase // empty' 2>/dev/null) || base=""
-  [[ -n $base ]] || return 2
-  dir="$cache/$base"
-  rm -rf "$dir"; mkdir -p "$cache"
-  git clone --quiet --depth 1 "https://aur.archlinux.org/$base.git" "$dir" 2>/dev/null || return 0
-  arch=$(sed -n 's/^arch=//p' "$dir/PKGBUILD" 2>/dev/null | head -1) || arch=""
-  [[ -n $arch ]] || return 0                  # unparseable: let the build decide
-  [[ $arch =~ (^|[^a-z0-9_])(aarch64|any)([^a-z0-9_]|$) ]]
-}
-
-cmd_aur() {
-  need_repo; fetch_upstream
-  local install=0; [[ ${1:-} == --install ]] && install=1
-  local want=() p todo=() noarch=() gone=() failed=()
-  mapfile -t want < <(git -C "$repo" show "origin/$channel:system/packages/aur.packages" 2>/dev/null \
-    | sed -e 's/#.*//' -e 's/[[:space:]]//g' | grep . || true)
-  ((${#want[@]})) || { warn "could not read Ryoku's aur.packages"; return 0; }
-  if ((install)); then ensure_yay || return 0; fi
-  for p in "${want[@]}"; do
-    pacman -Qq "$p" >/dev/null 2>&1 && continue
-    if ! command -v yay >/dev/null; then todo+=("$p"); continue; fi
-    local rc=0; aur_arch_ok "$p" || rc=$?   # bare non-zero would trip set -e
-    case $rc in
-      0) todo+=("$p") ;;
-      2) gone+=("$p") ;;
-      *) noarch+=("$p") ;;
+# install/update args: choice flags, --dry-run, and `ryoku update`'s own.
+parse_args() {
+  while (($#)); do
+    case $1 in
+      --dry-run) DRY=1; shift ;;
+      --system|--full|-v|--verbose) UPDATE_ARGS+=("$1"); shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) choice_flag "$1" "${2:-}" || die "unknown option: $1 (ryoku-arm help)"
+         shift "$FLAG_ARGS" ;;
     esac
   done
-  ((${#noarch[@]})) && say "x86-only in the AUR (skipped): ${noarch[*]}"
-  ((${#gone[@]})) && warn "not in the AUR (skipped): ${gone[*]}"
-  if ((${#todo[@]} == 0)); then say "Ryoku's AUR set: nothing left to install"; return 0; fi
-  say "Ryoku AUR packages to install (${#todo[@]}): ${todo[*]}"
-  if ((!install)); then echo "  install with: ryoku-arm aur --install"; return 0; fi
-  for p in "${todo[@]}"; do
-    # one at a time and best-effort, as Ryoku's installer does
-    yay -S --needed --noconfirm --sudoloop "$p" || failed+=("$p")
-  done
-  ((${#failed[@]})) && warn "did not build: ${failed[*]} (retry: yay -S ${failed[*]})"
-  return 0
 }
 
-cmd_deps() {
-  need_repo; fetch_upstream
-  local install=0; [[ ${1:-} == --install ]] && install=1
-  mapfile -t want < <(wanted_deps)
-  declare -A repo_has=()
-  while IFS= read -r n; do repo_has[$n]=1; done < <(pacman -Slq)
-  local missing=() unavailable=()
-  for d in "${want[@]}"; do
-    pacman -T "$d" >/dev/null 2>&1 && continue          # satisfied (incl. provides)
-    if [[ -n ${repo_has[$d]:-} ]]; then missing+=("$d"); else unavailable+=("$d"); fi
-  done
-  ((${#unavailable[@]})) && warn "wanted by Ryoku but not in your repos: ${unavailable[*]}"
-  if ((${#missing[@]} == 0)); then
-    say "all ${#want[@]} Ryoku dependencies are installed"
-    return 0
-  fi
-  say "missing: ${missing[*]}"
-  if ((install)); then
-    sudo pacman -S --needed --noconfirm "${missing[@]}"
+load_choices() {
+  choices_load
+  choices_infer
+  CHANNEL=$(choice ref)
+}
+
+self_update() {
+  if [[ -d $SHARE/.git ]]; then
+    git -C "$SHARE" pull --quiet --ff-only || warn "could not update $(tilde "$SHARE")"
   else
-    echo "  install with: ryoku-arm deps --install"
+    git clone --quiet --depth 1 https://github.com/jccr/ryoku-aarch64.git "$SHARE"
   fi
+  mkdir -p "$BIN"
+  ln -sf "$SHARE/ryoku-arm" "$BIN/ryoku-arm"
 }
 
-# Rebuild an arch=any Ryoku package when it is missing or its PKGBUILD version
-# moved. makepkg runs unprivileged; deps and the result go through sudo pacman.
-build_any() {
-  local p=$1 want have work log
-  want="$(pkgbuild_field "$p" pkgver | head -1)-$(pkgbuild_field "$p" pkgrel | head -1)"
-  # pacman -Q fails for a package not installed yet; under pipefail + set -e
-  # that silently killed the whole run (ryoku-arm apps --install, 2026-10-18)
-  have=$(pacman -Q "$p" 2>/dev/null | awk '{print $2}' | sed 's/^[0-9]*://') || have=""
-  [[ $have == "$want" ]] && return 0
-  say "building $p $want${have:+ (installed $have)}"
-  work="$HOME/.cache/ryoku-aarch64/pkgs"; log="$work/$p.log"
-  rm -rf "${work:?}/$p"; mkdir -p "$work"
-  git -C "$repo" archive "origin/$channel" "release/packages/$p" | tar -x -C "$work" \
-    && mv "$work/release/packages/$p" "$work/$p" && rm -rf "$work/release"
-  mapfile -t deps < <(pkgbuild_field "$p" depends makedepends | sed 's/[<>=].*//' | grep . || true)
-  # shellcheck disable=SC2024  # the log is the user's file
-  if ((${#deps[@]})) && ! sudo pacman -S --needed --noconfirm --asdeps "${deps[@]}" >"$log" 2>&1; then
-    warn "$p: build deps failed; see $log"; return 0
-  fi
-  if ( cd "$work/$p" && makepkg -cf --noconfirm ) >>"$log" 2>&1; then
-    # shellcheck disable=SC2024
-    sudo pacman -U --noconfirm "$work/$p"/*.pkg.tar.* >>"$log" 2>&1 || warn "$p did not install; see $log"
-  else
-    warn "$p did not build (non-fatal); see $log"
-  fi
-}
-
-is_apple() { grep -qa apple /proc/device-tree/compatible 2>/dev/null; }
-
-# Bundled Ryoku shell plugins (plugins/<id> in this repo). `ryoku plugin add`
-# refuses an installed id, so an upgrade is remove + add; that drops the bar
-# placement back to the plugin's default lane.
-install_plugin() { # id
-  local id=$1 dir="$home_share/plugins/$1" want have
-  [[ -f $dir/manifest.json ]] || { warn "$id: not in $home_share (run ryoku-arm self-update)"; return 0; }
-  want=$(jq -r .version "$dir/manifest.json") || { warn "$id: unreadable manifest"; return 0; }
-  have=$(ryoku plugin list --json 2>/dev/null | jq -r --arg id "$id" '.[]? | select(.id == $id) | .version' || true)
-  if [[ $have == "$want" ]]; then
-    return 0
-  fi
-  if [[ -n $have ]]; then
-    say "upgrading plugin $id $have -> $want"
-    ryoku plugin remove "$id" >/dev/null || { warn "could not remove $id $have"; return 0; }
-  else
-    say "installing plugin $id $want on the bar"
-  fi
-  ryoku plugin add "$dir" --bar --yes || warn "ryoku plugin add $id failed"
-}
-
-# Keyboard-backlight row in Ryoku's quick settings ("Sound & display"). Plugins
-# cannot extend quick settings, and a user_edits fork would freeze the whole
-# file, so the row is inserted inline into the deployed QuickSettingsHome.qml,
-# after its screen-brightness control, plus `import Quickshell.Io` for Process.
-# Inline, not a separate .qml file: Quickshell does not register a new file as a
-# type of that folder ("KbdBacklightSlider is not a type" blanked the page).
-# deploy.sh re-lays the shell on every update, so this is re-applied after each
-# one. Returns 0 when it changed something (restart the shell), 1 otherwise.
-qs_dir() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/quickshell/shell/modules/bar/framebars/menus/quicksettings"; }
-qs_marker='ryoku-aarch64 kbd-row begin'
-
-# Strip everything any version of this step added (exact markers only).
-strip_quick_settings_row() { # file
-  sed -i -e '/ryoku-aarch64 kbd-row begin/,/ryoku-aarch64 kbd-row end/d' \
-         -e '/^import Quickshell\.Io \/\/ ryoku-aarch64$/d' \
-         -e '/KbdBacklightSlider {.*ryoku-aarch64/d' "$1"
-}
-
-apply_quick_settings() {
-  local dir home frag awkf tmp
-  dir=$(qs_dir); home="$dir/QuickSettingsHome.qml"
-  frag="$home_share/quickshell/kbd-row.qml.frag"; awkf="$home_share/quickshell/insert-row.awk"
-  rm -f "$dir/KbdBacklightSlider.qml"     # left by the first (broken) version
-  [[ -f $home ]] || { warn "quick settings not found at $dir; skipped the keyboard row"; return 1; }
-  [[ -f $frag && -f $awkf ]] || { warn "keyboard row files missing (ryoku-arm self-update)"; return 1; }
-  # already in place and current: nothing to do
-  if grep -q "$qs_marker" "$home" && ! grep -q 'KbdBacklightSlider {' "$home"; then
-    tmp=$(mktemp)
-    sed -n '/ryoku-aarch64 kbd-row begin/,/ryoku-aarch64 kbd-row end/p' "$home" | sed 's/^[[:space:]]*//' > "$tmp"
-    if diff -q <(sed 's/^[[:space:]]*//' "$frag") "$tmp" >/dev/null; then rm -f "$tmp"; return 1; fi
-    rm -f "$tmp"
-  fi
-  tmp=$(mktemp)
-  cp "$home" "$tmp"; strip_quick_settings_row "$tmp"
-  awk -v frag="$frag" -f "$awkf" "$tmp" "$tmp" > "$tmp.new"
-  if grep -q "$qs_marker" "$tmp.new" && grep -qE '^import[[:space:]]+Quickshell\.Io' "$tmp.new"; then
-    cat "$tmp.new" > "$home"
-    say "added the keyboard backlight row to quick settings"
-    rm -f "$tmp" "$tmp.new"; return 0
-  fi
-  warn "Ryoku's quick settings layout changed (no screen-brightness anchor or Quickshell import); keyboard row skipped"
-  rm -f "$tmp" "$tmp.new"; return 1
-}
-
-remove_quick_settings_row() {
-  local dir home changed=0
-  dir=$(qs_dir); home="$dir/QuickSettingsHome.qml"
-  if [[ -f $home ]] && grep -qE 'ryoku-aarch64' "$home"; then
-    strip_quick_settings_row "$home"; changed=1
-  fi
-  [[ -f $dir/KbdBacklightSlider.qml ]] && { rm -f "$dir/KbdBacklightSlider.qml"; changed=1; }
-  if ((changed)); then
-    say "removed the keyboard row from quick settings"
-    restart_shell_if_live
-  fi
-}
-
-restart_shell_if_live() {
-  if systemctl --user is-active --quiet ryoku-shell 2>/dev/null; then
-    systemctl --user restart ryoku-shell && say "restarted the Ryoku shell"
-  fi
-}
-
-cmd_plugins() {
-  # Keyboard Light: Apple laptops whose keyboard has no backlight keys (the Air)
-  # still expose the LED; a native slider on the bar and in quick settings.
-  if is_apple && compgen -G '/sys/class/leds/*kbd_backlight*' >/dev/null; then
-    install_plugin keyboard-backlight
-    # Inline quick-settings row (confirmed on a real shell 2026-10-18);
-    # RYOKU_ARM_QS_ROW=0 opts out and removes it.
-    if [[ ${RYOKU_ARM_QS_ROW:-1} == 1 ]]; then
-      if apply_quick_settings; then restart_shell_if_live; fi
-    else
-      remove_quick_settings_row
-    fi
-  fi
-}
-
-# Lid switch. Hyprland's switch binds match an input device by NAME, and Ryoku's
-# modules/lid.lua binds only "Lid Switch" (the ACPI lid button x86 laptops have).
-# Apple Silicon's lid is the SMC input "Apple SMC power/lid events", so a close
-# never reached ryoku-clamshell; meanwhile its daemon holds logind's
-# handle-lid-switch inhibitor, so logind didn't act either: the panel stayed
-# lit and nothing suspended. This binds every SW_LID device under its real name
-# to the same clamshell commands, in a marked block of ~/.config/hypr/user.lua
-# (user-owned, loaded last, never touched by a deploy). Laid once; re-running
-# rewrites the block only when the names change.
-lid_begin='-- ryoku-aarch64 lid begin'
-lid_end='-- ryoku-aarch64 lid end'
-
-lid_switch_names() { # input devices whose SW bitmap has SW_LID (bit 0), minus Ryoku's own
-  local line name='' w
-  while IFS= read -r line; do
-    case $line in
-      'N: Name='*) name=${line#'N: Name="'}; name=${name%'"'} ;;
-      'B: SW='*)
-        w=${line##* }; w=${w#SW=}
-        [[ $w =~ ^[0-9a-fA-F]+$ ]] && (( 16#$w & 1 )) && [[ -n $name && $name != 'Lid Switch' ]] \
-          && printf '%s\n' "$name"
-        true ;;
-      '') name='' ;;
-    esac
-  done < "${RYOKU_ARM_INPUT_DEVICES:-/proc/bus/input/devices}" | sort -u
-}
-
-lid_block() { # names on stdin -> the user.lua block
-  local n q
-  echo "$lid_begin (ryoku-arm lid: this machine's lid switch, which Ryoku's"
-  echo "-- modules/lid.lua misses: it binds only \"Lid Switch\". Same clamshell policy.)"
-  while IFS= read -r n; do
-    q=${n//\\/\\\\}; q=${q//\"/\\\"}
-    printf 'hl.bind("switch:on:%s",  hl.dsp.exec_cmd("command -v ryoku-clamshell >/dev/null 2>&1 && ryoku-clamshell lid close"), { locked = true })\n' "$q"
-    printf 'hl.bind("switch:off:%s", hl.dsp.exec_cmd("command -v ryoku-clamshell >/dev/null 2>&1 && ryoku-clamshell lid open"),  { locked = true })\n' "$q"
-  done
-  echo "$lid_end"
-}
-
-lid_binds() {
-  local f=${XDG_CONFIG_HOME:-$HOME/.config}/hypr/user.lua names want have tmp
-  names=$(lid_switch_names)
-  [[ -f $f ]] && have=$(sed -n "/^$lid_begin/,/^$lid_end\$/p" "$f") || have=''
-  if [[ -z $names || ${RYOKU_ARM_LID:-1} == 0 ]]; then
-    [[ -n $have ]] || return 0
-    sed -i "/^$lid_begin/,/^$lid_end\$/d" "$f"
-    say "removed the lid-switch binds from ${f/#"$HOME"/\~}"
-    return 0
-  fi
-  want=$(lid_block <<< "$names")
-  [[ $have == "$want" ]] && return 0
-  # Hyprland reloads on the edit and a reload re-reads the lid: with it shut and
-  # no dock, that suspends the machine mid-run (and drops an SSH session).
-  if [[ $(ryoku-clamshell status 2>/dev/null | sed -n 's/^clamshell=//p') != active \
-        && $(ryoku-clamshell status 2>/dev/null | sed -n 's/^lid=//p') == closed ]]; then
-    warn "lid is closed: skipped the lid-switch binds (the reload would suspend now); open it and run: ryoku-arm lid"
-    return 0
-  fi
-  mkdir -p "${f%/*}"; touch "$f"
-  tmp=$(mktemp)
-  sed "/^$lid_begin/,/^$lid_end\$/d" "$f" > "$tmp"
-  { cat "$tmp"; [[ -s $tmp && -n $(tail -c1 "$tmp") ]] && echo; echo; echo "$want"; } > "$tmp.new"
-  cat "$tmp.new" > "$f"; rm -f "$tmp" "$tmp.new"
-  say "bound the lid switch ($(paste -sd, <<< "$names")) in ${f/#"$HOME"/\~}"
-}
-
-# Keep awake vs the lid. Ryoku's Keep awake toggle (bar and quick settings,
-# ryoku-cmd-caffeine) holds a systemd idle:sleep inhibitor, but logind skips a
-# user's own inhibitors when that same user asks to suspend, and the lid policy
-# (ryoku-clamshell -> ryoku-shell suspend -> login1 Suspend) runs as you. So a
-# lid close slept even with Keep awake on. ryoku-clamshell has no hook, so this
-# inserts clamshell/keep-awake.sh.frag inline into the deployed copy, plus one
-# hook line at the top of suspend_while_closed (every lid-driven suspend: the
-# close edge, the startup/reload sync, and the daemon's undock-while-shut path)
-# and one in cancel_current_suspend (both open paths). deploy.sh re-lays the
-# script on every update, so ryoku-arm update re-applies it.
-ka_mark='ryoku-aarch64 keep-awake'
-
-strip_keep_awake() { # file
-  sed -i -e "/# $ka_mark begin/,/# $ka_mark end/d" -e "/# $ka_mark\$/d" "$1"
-}
-
-clamshell_keep_awake() {
-  local f=${RYOKU_ARM_CLAMSHELL:-$HOME/.local/bin/ryoku-clamshell} frag="$home_share/clamshell/keep-awake.sh.frag" tmp
-  [[ -f $f ]] || return 0
-  "$f" is-laptop >/dev/null 2>&1 || return 0
-  tmp=$(mktemp "${f%/*}/.ryoku-clamshell.XXXXXX")
-  cp -p "$f" "$tmp"; strip_keep_awake "$tmp"
-  if [[ ${RYOKU_ARM_KEEPAWAKE:-1} != 0 ]]; then
-    [[ -f $frag ]] || { warn "keep-awake fragment missing (ryoku-arm self-update)"; rm -f "$tmp"; return 0; }
-    if ! grep -q '^suspend_while_closed() {$' "$tmp" || ! grep -q '^cancel_current_suspend() {$' "$tmp"; then
-      warn "ryoku-clamshell changed upstream (no suspend_while_closed/cancel_current_suspend); Keep awake lid fix skipped"
-      rm -f "$tmp"; return 0
-    fi
-    awk -v frag="$frag" -v m="# $ka_mark" '
-      /^suspend_while_closed\(\) \{$/ {
-        while ((getline l < frag) > 0) print l; close(frag)
-        print; print "  if keep_awake_on; then keep_awake_close; return 0; fi  " m; next }
-      /^cancel_current_suspend\(\) \{$/ { print; print "  keep_awake_open  " m; next }
-      { print }' "$tmp" > "$tmp.new" && cat "$tmp.new" > "$tmp"; rm -f "$tmp.new"
-    bash -n "$tmp" || { warn "patched ryoku-clamshell failed bash -n; left it unchanged"; rm -f "$tmp"; return 0; }
-  fi
-  if cmp -s "$tmp" "$f"; then rm -f "$tmp"; return 0; fi
-  # rename, never rewrite in place: the running daemon is reading this script
-  mv -f "$tmp" "$f"
-  if [[ ${RYOKU_ARM_KEEPAWAKE:-1} != 0 ]]; then say "ryoku-clamshell: Keep awake now holds a lid close awake (lock + display off)"
-  else say "ryoku-clamshell: removed the Keep awake lid change"; fi
-  # Lid edges run the new file at once. The daemon (undock-while-shut path)
-  # needs a restart, which briefly hands the lid back to logind: only when open.
-  if systemctl --user is-active --quiet ryoku-clamshell.service 2>/dev/null; then
-    if [[ $("$f" status 2>/dev/null | sed -n 's/^lid=//p') == open ]]; then
-      systemctl --user restart ryoku-clamshell.service && say "restarted the clamshell daemon"
-    else
-      warn "lid is closed: the clamshell daemon picks this up at its next restart (login, or ryoku-arm lid with the lid open)"
-    fi
-  fi
-}
-
-cmd_lid() {
-  lid_binds
-  clamshell_keep_awake
-}
-
-# asahi-audio <= v5.0 labels each Mac's processed mic output "AUX0". Quickshell's
-# level meter (the quick-settings mic row) can't map AUX0 to its stereo capture
-# stream and drops every buffer with "pipewire.peak ... missing channels",
-# flooding the shell log. Upstream fixed it in ab1b469 (2026-10-07, unreleased):
-# that output becomes MONO. This applies the identical one-line change to the
-# installed files; a fixed package release overwrites them with the same text.
-cmd_asahi_fixes() {
-  local pat='"audio.position":[[:space:]]*\[[[:space:]]*"AUX0"[[:space:]]*\]' files=()
-  is_apple || return 0
-  mapfile -t files < <(grep -lE "$pat" /usr/share/asahi-audio/*/mic*.json 2>/dev/null || true)
-  ((${#files[@]})) || return 0
-  say "applying asahi-audio's unreleased mic fix (AUX0 -> MONO, upstream ab1b469) to ${#files[@]} file(s)"
-  sudo sed -i -E "s/$pat/\"audio.position\": [\"MONO\"]/" "${files[@]}" || { warn "could not patch asahi-audio"; return 0; }
-  if systemctl --user is-active --quiet wireplumber 2>/dev/null; then
-    systemctl --user restart wireplumber pipewire pipewire-pulse 2>/dev/null \
-      && say "restarted PipeWire to load it"
+converge() { # verb args...
+  local verb=$1 rc=0; shift
+  load_choices
+  parse_args "$@"
+  CHANNEL=$(choice ref)
+  choices_save
+  dry && say "dry run: nothing is changed"
+  sudo_begin
+  run_steps "${STEPS[@]}" || rc=$?
+  if ((rc)); then warn "$verb finished with failures (above)"; return "$rc"; fi
+  say "$verb done"
+  if [[ $verb == install ]] && ! dry; then
+    say "next: reboot and log in (session: Hyprland); later: ryoku-arm update"
   fi
 }
 
 cmd_update() {
-  need_repo
-  sudo_keepalive
-  cmd_self_update quiet || true
-  ensure_branch
-  fetch_upstream
-  say "syncing Ryoku's dependencies from origin/$channel"
-  cmd_deps --install
-  for p in "${anypkgs[@]}"; do build_any "$p"; done
-  cmd_asahi_fixes
-  say "handing off to: ryoku update $*"
-  # ryoku update: pre-snapshot, fast-forward the checkout, deploy.sh, doctor,
-  # post-snapshot. RYOKU_WM pins the provider when run outside a session.
-  local rc=0
-  RYOKU_WM=${RYOKU_WM:-hyprland} ryoku update "$@" || rc=$?
-  # the deploy re-laid the shell: put the keyboard row (and plugin) back, and
-  # lay the configs a checkout deploy never does (LazyVim, starship, yazi, ...)
-  cmd_plugins
-  cmd_seed
-  cmd_lid
-  return "$rc"
+  # pull the port first and re-exec, so this run already has its new steps
+  if [[ -z ${RYOKU_ARM_UPDATED:-} && ${RYOKU_ARM_SELF_UPDATE:-1} == 1 && " $* " != *" --dry-run "* ]]; then
+    local before after
+    before=$(git -C "$SHARE" rev-parse HEAD 2>/dev/null || true)
+    self_update
+    after=$(git -C "$SHARE" rev-parse HEAD 2>/dev/null || true)
+    if [[ $before != "$after" ]]; then
+      say "ryoku-arm updated to ${after:0:7}; restarting it"
+      RYOKU_ARM_UPDATED=1 exec "$SHARE/ryoku-arm" update "$@"
+    fi
+  fi
+  converge update "$@"
 }
 
 cmd_status() {
+  local disp type
+  load_choices
   ryoku status || true
   echo
-  say "aarch64 checks"
-  local head disp type
-  if [[ -d $repo/.git ]]; then
-    head=$(git -C "$repo" symbolic-ref --short --quiet HEAD 2>/dev/null || echo detached)
-    printf '  %-16s %s @ %s\n' checkout "$repo" "$head $(git -C "$repo" rev-parse --short HEAD)"
+  say "aarch64"
+  if have_repo; then
+    printf '  %-16s %s @ %s %s\n' checkout "$(tilde "$(repo)")" \
+      "$(git -C "$(repo)" symbolic-ref --short --quiet HEAD 2>/dev/null || echo detached)" \
+      "$(git -C "$(repo)" rev-parse --short HEAD)"
   fi
+  printf '  %-16s %s\n' ryoku-arm "$(git -C "$ARM_DIR" rev-parse --short HEAD 2>/dev/null || echo '?')"
   disp=$(loginctl show-user "$USER" -p Display --value 2>/dev/null || true)
-  type=$( [[ -n $disp ]] && loginctl show-session "$disp" -p Type --value 2>/dev/null || true)
+  type=$([[ -n $disp ]] && loginctl show-session "$disp" -p Type --value 2>/dev/null || true)
   printf '  %-16s %s\n' login-session "${disp:-none} (${type:-?})"
   [[ $type == wayland || -z $disp ]] || warn "display session is $type, not wayland: log in through SDDM, or polkit will deny the shell"
-  for p in "${anypkgs[@]}"; do
-    printf '  %-16s %s\n' "$p" "$(pacman -Q "$p" 2>/dev/null | awk '{print $2}' || true)"
-  done
-  [[ -n $(pacman -Q "${anypkgs[@]}" 2>&1 >/dev/null) ]] && warn "some arch=any packages are missing: ryoku-arm update"
-  printf '  %-16s %s\n' scripts "$(git -C "$home_share" rev-parse --short HEAD 2>/dev/null || echo 'not installed')"
+  echo
+  say "choices ($(tilde "$CHOICES_FILE"))"
+  choices_print
 }
 
-cmd_self_update() {
-  local quiet=${1:-}
-  if [[ -d $home_share/.git ]]; then
-    git -C "$home_share" pull --quiet --ff-only 2>/dev/null \
-      && [[ -z $quiet ]] && say "scripts at $(git -C "$home_share" rev-parse --short HEAD)"
-  else
-    git clone --quiet --depth 1 https://github.com/jccr/ryoku-aarch64.git "$home_share"
-    [[ -z $quiet ]] && say "scripts installed to $home_share"
-  fi
-  ln -sf "$home_share/ryoku-arm" "$HOME/.local/bin/ryoku-arm"
+cmd_debug() {
+  local sub=${1:-} names=() a
+  (($#)) && shift
+  case $sub in
+    steps) steps_list ;;
+    step)
+      for a in "$@"; do if [[ $a == --dry-run ]]; then DRY=1; else names+=("$a"); fi; done
+      ((${#names[@]})) || die "which step? (ryoku-arm debug steps)"
+      load_choices
+      sudo_begin
+      run_steps "${names[@]}" ;;
+    choices) load_choices; choices_print ;;
+    self-update) self_update; say "ryoku-arm at $(git -C "$SHARE" rev-parse --short HEAD)" ;;
+    ""|-h|--help|help) debug_usage ;;
+    *) die "unknown debug command: $sub (ryoku-arm debug)" ;;
+  esac
 }
+
+[[ $EUID -ne 0 ]] || die "run as your normal user; sudo is used where needed"
 
 case ${1:-} in
-  update)      shift; cmd_update "$@" ;;
-  deps)        shift; cmd_deps "$@" ;;
-  status)      cmd_status ;;
-  plugins)     cmd_plugins ;;
-  asahi-fixes) cmd_asahi_fixes ;;
-  lid)         cmd_lid ;;
-  apps)        shift; cmd_apps "$@" ;;
-  seed)        cmd_seed ;;
-  aur)         shift; cmd_aur "$@" ;;
-  snapshots)   snapper -c root list ;;
-  rollback)    shift; exec "$home_share/snapshot-rollback.sh" "$@" ;;
-  self-update) cmd_self_update ;;
-  reinstall)   shift; exec "$home_share/ryoku-aarch64.sh" "$@" ;;
-  ""|-h|--help|help)  sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//' ;;
-  *) die "unknown command: $1 (try ryoku-arm help)" ;;
+  install)   shift; converge install "$@" ;;
+  update)    shift; cmd_update "$@" ;;
+  status)    cmd_status ;;
+  snapshots) snapper -c root list ;;
+  rollback)  shift; exec "$ARM_DIR/snapshot-rollback.sh" "$@" ;;
+  debug)     shift; cmd_debug "$@" ;;
+  ""|-h|--help|help) usage ;;
+  *) die "unknown command: $1 (ryoku-arm help)" ;;
 esac

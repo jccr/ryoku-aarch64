@@ -1,0 +1,44 @@
+# Packages the Ryoku session needs that its desktop PKGBUILDs don't name
+# (the deps step installs these plus every depends/makedepends of Ryoku's
+# desktop PKGBUILDs, read live from the checkout). Most come from Ryoku's own
+# system/packages/base.packages: what the default binds, the shell configs
+# and the login greeting run, kept even with --no-apps.
+
+# build: makepkg for Ryoku's arch=any packages; Quickshell's Vulkan headers
+base-devel
+vulkan-headers
+
+# session: audio, auth, notifications, the multimedia backend Qt plays through
+pipewire-pulse
+wireplumber
+polkit
+gnome-keyring
+libnotify
+qt6-multimedia-ffmpeg
+plymouth
+
+# apps the default binds launch
+fish
+kitty
+fuzzel
+nautilus
+nautilus-python
+
+# terminal tools Ryoku's fish/bash/zsh configs call (ryoku-fastfetch runs at
+# every login and errors without fastfetch)
+fastfetch
+starship
+zoxide
+fzf
+fd
+eza
+bat
+btop
+neovim
+ripgrep
+lazygit
+yazi
+bash-completion
+
+# readable Unicode console font for the TTY (box drawing, prompt arrows)
+terminus-font
