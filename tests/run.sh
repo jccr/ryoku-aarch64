@@ -43,6 +43,8 @@ export RYOKU_ARM_GO=$FAKE_BIN/go
 cp "$UPSTREAM/system/hardware/power/ryoku-clamshell" "$HOME/.local/bin/ryoku-clamshell"
 [[ -x $UPSTREAM/system/hardware/power/ryoku-hw-laptop ]] && cp "$UPSTREAM/system/hardware/power/ryoku-hw-laptop" "$HOME/.local/bin/"
 printf -- '-- your overrides\n' > "$XDG_CONFIG_HOME/hypr/user.lua"
+EYE=$XDG_CONFIG_HOME/quickshell/shell/modules/bar/barstyles/qsbar/modules/IdleInhibitorWidget.qml
+mkdir -p "${EYE%/*}"; cp "$UPSTREAM/ryoku/shell/quickshell/shell/modules/bar/barstyles/qsbar/modules/IdleInhibitorWidget.qml" "$EYE"
 printf '[options]\nArchitecture = auto\n\n[core]\nInclude = /etc/pacman.d/mirrorlist\n' > "$S/pacman.conf"
 # a clamshell lid that reads open
 mkdir -p "$S/lid"; printf 'state:      open\n' > "$S/lid/state"
@@ -61,7 +63,7 @@ tree_sum() { (cd "$HOME" && find . -type f -not -path './.cache/*' -print0 | sor
 echo "== commands"
 arm help;            check "help exits 0"                 test "$RC" -eq 0
 check "help lists choices"  has "--no-keep-awake-lid"
-arm debug steps;     check "debug steps lists 20 steps"   test "$(grep -c '^  [a-z]' <<<"$OUT")" -eq 20
+arm debug steps;     check "debug steps lists 21 steps"   test "$(grep -c '^  [a-z]' <<<"$OUT")" -eq 21
 arm frobnicate;      check "unknown command fails"        test "$RC" -ne 0
 arm install --bogus; check "unknown option fails"         test "$RC" -ne 0
 
@@ -96,6 +98,8 @@ check "lid: user's own lines kept" grep -qx -- '-- your overrides' "$XDG_CONFIG_
 check "keep-awake-lid: clamshell patched" grep -q 'keep_awake_on; then keep_awake_close' "$HOME/.local/bin/ryoku-clamshell"
 check "keep-awake-lid: patched clamshell parses" bash -n "$HOME/.local/bin/ryoku-clamshell"
 check "shell-suspend-fix: ryoku-shell rebuilt from patched source" grep -q 'fixed=yes' "$HOME/.local/bin/ryoku-shell"
+check "eye-keep-awake: eye toggles Keep awake" grep -q 'Toggles.toggleCaffeine()' "$EYE"
+check "eye-keep-awake: shows Keep awake state" grep -q 'property bool on: Toggles.keepAwake' "$EYE"
 check "shell-suspend-fix: checkout left untouched" test -z "$(git -C "$S/ryoku" status --porcelain)"
 check "login-screen skipped (--no-sddm)" bash -c "! grep -qE '^sudo .*(sddm|qylock)' '$FAKE_LOG'"
 check "aur skipped (--no-aur)" bash -c "! grep -q '^curl' '$FAKE_LOG'"
@@ -125,6 +129,10 @@ check "--no-lid removes the block" bash -c "! grep -q 'ryoku-aarch64' '$XDG_CONF
 check "--no-keep-awake-lid restores clamshell exactly" cmp -s "$HOME/.local/bin/ryoku-clamshell" "$UPSTREAM/system/hardware/power/ryoku-clamshell"
 arm update --lid --keep-awake-lid
 check "--lid puts it back" grep -q 'ryoku-aarch64 lid begin' "$XDG_CONFIG_HOME/hypr/user.lua"
+arm update --no-eye-keep-awake
+check "--no-eye-keep-awake restores the shipped widget exactly" cmp -s "$EYE" "$UPSTREAM/ryoku/shell/quickshell/shell/modules/bar/barstyles/qsbar/modules/IdleInhibitorWidget.qml"
+arm update --eye-keep-awake
+check "--eye-keep-awake puts it back" grep -q 'Toggles.toggleCaffeine()' "$EYE"
 
 echo "== lid-closed safety"
 printf 'state:      closed\n' > "$S/lid/state"

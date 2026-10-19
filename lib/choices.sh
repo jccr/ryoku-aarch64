@@ -11,7 +11,7 @@ declare -A CHOICE_DEFAULT=(
   [ref]=main [dir]="$HOME/src/ryoku"
   [locale]=en_US.UTF-8 [tty_font]=ter-v32n
   [fish]=1 [sddm]=1 [asahi_desktop]=1 [kbd_light]=1
-  [apps]=1 [aur]=1 [lid]=1 [keep_awake_lid]=1
+  [apps]=1 [aur]=1 [lid]=1 [keep_awake_lid]=1 [eye_keep_awake]=1
 )
 declare -A CHOICE_DOC=(
   [ref]="Ryoku branch to build"
@@ -26,6 +26,7 @@ declare -A CHOICE_DOC=(
   [aur]="Ryoku's AUR set that builds on aarch64 (via yay)"
   [lid]="bind the laptop's real lid switch to Ryoku's lid policy"
   [keep_awake_lid]="Keep awake also holds a lid close awake"
+  [eye_keep_awake]="the bar's eye icon toggles Keep awake (idle and lid)"
 )
 declare -A CHOICE=()
 

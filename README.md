@@ -52,6 +52,7 @@ this repo and restarts itself, so new steps apply in the same run.
 | apps | Ryoku's preinstalled apps your repos carry |
 | aur | Ryoku's AUR set that builds on aarch64 |
 | kbd-light | Keyboard Light on MacBooks |
+| eye-keep-awake | the bar's eye icon toggles Keep awake (idle and lid) |
 | asahi-fixes | upstream Asahi fixes not yet released |
 | lid | the laptop's real lid switch drives Ryoku's lid policy |
 | keep-awake-lid | Keep awake also holds a lid close awake |
@@ -64,10 +65,10 @@ failure is reported at the end and the rest still runs.
 Set on the command line of `install` or `update` and saved in
 `~/.config/ryoku-aarch64/choices`, so every later run honours them. Each on/off
 choice is on by default. `--no-X` turns it off and `--X` turns it back on. Turning
-off kbd-light, lid or keep-awake-lid also undoes what those steps did; the other
+off kbd-light, lid, keep-awake-lid or eye-keep-awake also undoes what those steps did; the other
 choices only stop the step from running. `ryoku-arm help` lists them all:
 `--no-fish`, `--no-sddm`, `--no-asahi-desktop`, `--no-kbd-light`, `--no-apps`,
-`--no-aur`, `--no-lid`, `--no-keep-awake-lid`, and `--locale X`,
+`--no-aur`, `--no-lid`, `--no-keep-awake-lid`, `--no-eye-keep-awake`, and `--locale X`,
 `--tty-font X` (or `none`), `--dir X`, `--ref X`.
 
 A box installed before choices were saved has them read off the machine on its
@@ -207,6 +208,18 @@ as a type of that folder. Each deploy re-lays the shell, so every update
 re-applies it. If Ryoku moves the brightness control, the row is skipped with a
 warning instead of breaking the sidebar. Only on Apple laptops with a
 `kbd_backlight` LED.
+
+### eye-keep-awake
+Ryoku has two "stay awake" controls that look alike. Keep awake (quick
+settings, `ryoku-cmd-caffeine`) holds a systemd `idle:sleep` inhibitor, which
+keep-awake-lid can see. The bar's eye icon (`IdleInhibitorWidget`, "Idle
+inhibited") only maps a Wayland idle inhibitor inside the shell: idle timers
+stop, but nothing else can see it, so a lid close still slept. The step makes
+the eye a Keep awake toggle (same state, same inhibitor), so one control covers
+idle and the lid. It renders the deployed widget from the checkout's copy with
+four marked substitutions (`// ryoku-aarch64 eye-keep-awake`); turning the
+choice off puts the checkout's copy back unchanged. If Ryoku reshapes the
+widget, the step skips with a warning.
 
 ### asahi-fixes
 Upstream fixes not yet released, each the exact upstream change (a fixed
