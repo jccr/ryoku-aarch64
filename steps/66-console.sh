@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-step console optional "a UTF-8 system locale and a readable TTY font, when unset"
+step console optional "a UTF-8 system locale and a readable TTY font, when unset" sudo
 
 # Qt (and the whole desktop) wants a UTF-8 locale; a fresh ALARM install has
 # none and runs as "C". An existing UTF-8 LANG is left alone.

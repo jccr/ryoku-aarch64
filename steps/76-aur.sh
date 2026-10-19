@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-step aur optional "Ryoku's AUR set that builds on aarch64, via yay"
+step aur optional "Ryoku's AUR set that builds on aarch64, via yay" sudo
 
 # system/packages/aur.packages, installed after the desktop like
 # ryoku-shell-installer's stepAUR: bootstrap yay-bin, then build each package

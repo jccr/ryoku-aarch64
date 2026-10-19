@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-step services optional "enable bluetooth, rtkit and power-profiles-daemon"
+step services optional "enable bluetooth, rtkit and power-profiles-daemon" sudo
 
 # What Ryoku's ISO enables, minus NetworkManager: switching network managers
 # would cut an SSH session and override how this machine already gets online.

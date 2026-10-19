@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-step login-shell optional "~/.local/bin on the login PATH; fish as the login shell"
+step login-shell optional "~/.local/bin on the login PATH; fish as the login shell" sudo
 
 # deploy.sh puts every Ryoku binary in ~/.local/bin; a Hyprland started from a
 # TTY inherits the login shell's PATH, so the profile must carry it.

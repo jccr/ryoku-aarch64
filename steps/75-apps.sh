@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-step apps optional "Ryoku's preinstalled apps (base + dev lists) your repos carry"
+step apps optional "Ryoku's preinstalled apps (base + dev lists) your repos carry" sudo
 
 # Ryoku's preinstalled set (docs/preinstalled.md) is system/packages/
 # base.packages (system + apps) and dev.packages (toolchains).

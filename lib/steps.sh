@@ -1,6 +1,8 @@
 # shellcheck shell=bash
 # The step registry and runner. Each steps/NN-name.sh file registers itself
-# with `step name kind "doc"` and defines step_<name> (dashes as underscores).
+# with `step name kind "doc" [sudo]` and defines step_<name> (dashes as
+# underscores). "sudo" marks a step that may run sudo, so `debug step` asks
+# for the password only when one of those runs.
 # The NN prefix is the run order; install and update run the same list.
 #
 # kind: critical  a failure stops the run (later steps depend on it)
@@ -9,10 +11,18 @@
 # Every step must be safe to re-run: check the machine, act only on a gap.
 
 STEPS=()
-declare -A STEP_KIND=() STEP_DOC=()
+declare -A STEP_KIND=() STEP_DOC=() STEP_SUDO=()
 
-step() { # name kind doc
+step() { # name kind doc [sudo]
   STEPS+=("$1"); STEP_KIND[$1]=$2; STEP_DOC[$1]=$3
+  [[ ${4:-} == sudo ]] && STEP_SUDO[$1]=1
+  true
+}
+
+steps_need_sudo() { # names...
+  local s
+  for s in "$@"; do [[ -n ${STEP_SUDO[$s]:-} ]] && return 0; done
+  return 1
 }
 
 load_steps() {
@@ -25,7 +35,9 @@ load_steps() {
 
 steps_list() {
   local s
-  for s in "${STEPS[@]}"; do printf '  %-18s %-8s %s\n' "$s" "${STEP_KIND[$s]}" "${STEP_DOC[$s]}"; done
+  for s in "${STEPS[@]}"; do
+    printf '  %-18s %-8s %-4s %s\n' "$s" "${STEP_KIND[$s]}" "${STEP_SUDO[$s]:+sudo}" "${STEP_DOC[$s]}"
+  done
 }
 
 # Run steps in order. Each runs in a subshell with errexit on, so a failing

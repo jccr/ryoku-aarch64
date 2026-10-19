@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-step asahi-fixes optional "upstream Asahi fixes not yet released"
+step asahi-fixes optional "upstream Asahi fixes not yet released" sudo
 
 # Each fix is the exact upstream change, so a fixed package release overwrites
 # it with identical content.

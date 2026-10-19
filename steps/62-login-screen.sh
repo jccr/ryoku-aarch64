@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-step login-screen optional "SDDM with Ryoku's greeter as the login screen"
+step login-screen optional "SDDM with Ryoku's greeter as the login screen" sudo
 
 # Mirrors ryoku-shell-installer's stepSession: Ryoku's sddm/setup (enable sddm,
 # graphical target, keyring PAM, Wayland greeter, cursor fallback), then the

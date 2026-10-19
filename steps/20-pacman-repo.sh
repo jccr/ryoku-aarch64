@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-step pacman-repo critical "point pacman's [ryoku] at an empty local repo"
+step pacman-repo critical "point pacman's [ryoku] at an empty local repo" sudo
 
 # deploy.sh adds Server = https://repo.ryoku.dev/stable/$arch when pacman.conf
 # has no [ryoku], and leaves one that points anywhere else alone. That repo has

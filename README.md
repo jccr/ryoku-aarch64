@@ -96,7 +96,7 @@ tests/run.sh       the test suite (sandboxed; fake sudo, never touches the syste
 snapshots-setup.sh, snapshot-rollback.sh   btrfs snapshots (standalone)
 ```
 
-A new fix is a new `steps/NN-name.sh`: register it with `step name kind "doc"`,
+A new fix is a new `steps/NN-name.sh`: register it with `step name kind "doc" [sudo]`,
 define `step_name`, make it a no-op where it doesn't apply and when the machine
 already matches, route every change through `run` (so `--dry-run` works), and
 add a choice in `lib/choices.sh` if it should be optional. Then `tests/run.sh`.

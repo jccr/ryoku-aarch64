@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-step asahi-desktop optional "asahi-desktop-meta: speaker safety, asahi-audio, Vulkan"
+step asahi-desktop optional "asahi-desktop-meta: speaker safety, asahi-audio, Vulkan" sudo
 
 # Asahi's hardware support for a desktop, not a desktop environment:
 # speakersafetyd (protects the speakers), asahi-audio/bankstown, the Asahi

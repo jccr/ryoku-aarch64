@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-step desktop critical "deploy the desktop: deploy.sh the first time, then ryoku update"
+step desktop critical "deploy the desktop: deploy.sh the first time, then ryoku update" sudo
 
 # UPDATE_ARGS (ryoku-arm update's pass-through, e.g. --system) go to `ryoku
 # update`, which snapshots, fast-forwards the checkout, redeploys and runs the

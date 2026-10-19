@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-step deps critical "install what Ryoku's desktop PKGBUILDs and the session need"
+step deps critical "install what Ryoku's desktop PKGBUILDs and the session need" sudo
 
 # Read live from the checkout's PKGBUILDs (origin/<channel>, what is about to
 # be deployed), so this never drifts the way a hand-kept list does; plus the
