@@ -1,0 +1,18 @@
+# Ryoku's "shipped apps" (the doctor installs them once on every `ryoku
+# update`) that this port declines: the doctor's ledger is told they were
+# removed, so it never tries them. Apps your repos don't carry at all are
+# declined automatically and need no entry here. Format: name, then the
+# condition: aarch64 (always, on this port) or asahi (Apple Silicon only).
+
+# Official release is x86_64-only (internal/ryotunesrelease)
+ryotunes        aarch64
+
+# Steam on Asahi runs in a muvm microVM with games under FEX against an x86
+# rootfs: host aarch64 gaming tools never reach the game.
+#   gamescope: owns the display; Steam in muvm draws through its X11 bridge
+#   gamemode: gamemoderun would run inside the VM; x86 governor tweaks
+gamescope       asahi
+gamemode        asahi
+
+# RGB keyboard/mouse lighting; a MacBook has none
+openrgb         asahi

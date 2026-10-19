@@ -40,6 +40,7 @@ this repo and restarts itself, so new steps apply in the same run.
 | source | the Ryoku checkout (`~/src/ryoku`) exists, on a real `main` branch, fetched |
 | deps | everything Ryoku's desktop PKGBUILDs need, plus `packages/session.packages` |
 | ryoku-any | Ryoku's arch=any packages (cursors, UI fonts, gpk) at their PKGBUILD versions |
+| doctor-apps | Ryoku's doctor doesn't try shipped apps that can't run here |
 | desktop | the desktop is deployed: `deploy.sh` the first time, `ryoku update` after |
 | asahi-desktop | `asahi-desktop-meta` on Asahi (speaker safety, asahi-audio, Vulkan) |
 | services | bluetooth, rtkit, power-profiles-daemon enabled |
@@ -130,6 +131,31 @@ whatever they say: Ryoku's own packages (deploy.sh builds them into `~/.local`),
 the session runs that no PKGBUILD names (fish, kitty, the terminal tools the
 shell configs call, the TTY font). Installs go through `pacman -Syu --needed`,
 never a partial upgrade.
+
+### doctor-apps
+On every `ryoku update`, Ryoku's doctor installs its "shipped apps" (the
+`Apps()` list in ryoku-cli's `internal/ryokumanifest`, plus ryotunes) in one
+pacman transaction. On aarch64 some don't exist (ryomotion's PKGBUILD is
+x86_64-only, mangohud isn't in ALARM, ryotunes' release is x86_64), so the
+whole transaction failed and even the apps that would work never landed.
+Others install but can't do their job on a MacBook:
+`packages/doctor-declined.packages` lists them with the reason.
+
+- gamescope, gamemode: Steam on Asahi (the asahi-alarm `steam` wrapper) runs in
+  a muvm microVM, with games under FEX against an x86 rootfs, so host aarch64
+  gaming tools never reach the game. gamescope wants the display, but Steam
+  in muvm draws through muvm's X11 bridge; `gamemoderun` would run inside the
+  VM.
+- openrgb: RGB keyboard and mouse lighting; a MacBook has none.
+
+The doctor has its own opt-out: a name in `~/.local/state/ryoku/provisioned`
+that isn't installed reads as "you removed it" and is never put back. The step
+adds the declined names there before the desktop step runs the doctor. It
+records which ones it added, so an app that becomes installable later (it
+reaches your repos) is handed back to the doctor; a name the doctor recorded
+itself stays. The rest (waifu2x-ncnn-vulkan, songrec, ...) are left to the
+doctor, whose transaction now succeeds. Delete a name from the ledger yourself
+to re-arm the doctor for it.
 
 ### seed
 Ryoku's `deploy.sh` doesn't lay everything a packaged install gets: the

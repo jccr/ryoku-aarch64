@@ -45,6 +45,8 @@ printf '[options]\nArchitecture = auto\n\n[core]\nInclude = /etc/pacman.d/mirror
 # a clamshell lid that reads open
 mkdir -p "$S/lid"; printf 'state:      open\n' > "$S/lid/state"
 export RYOKU_LID_STATE_GLOB=$S/lid/state
+# an Apple Silicon machine, whatever this one is
+printf 'apple,j413\0apple,t8112\0' > "$S/compatible"; export RYOKU_ARM_DT_COMPAT=$S/compatible
 # the Ryoku checkout: a local clone whose origin is the real one
 git clone --quiet --shared "$UPSTREAM" "$S/ryoku"
 git -C "$S/ryoku" fetch --quiet origin "+refs/heads/main:refs/remotes/origin/main"
@@ -57,7 +59,7 @@ tree_sum() { (cd "$HOME" && find . -type f -not -path './.cache/*' -print0 | sor
 echo "== commands"
 arm help;            check "help exits 0"                 test "$RC" -eq 0
 check "help lists choices"  has "--no-keep-awake-lid"
-arm debug steps;     check "debug steps lists 18 steps"   test "$(grep -c '^  [a-z]' <<<"$OUT")" -eq 18
+arm debug steps;     check "debug steps lists 19 steps"   test "$(grep -c '^  [a-z]' <<<"$OUT")" -eq 19
 arm frobnicate;      check "unknown command fails"        test "$RC" -ne 0
 arm install --bogus; check "unknown option fails"         test "$RC" -ne 0
 
@@ -118,6 +120,28 @@ check "closed lid: user.lua left alone" grep -q 'ryoku-aarch64 lid begin' "$XDG_
 check "closed lid: says why" has "lid is closed"
 printf 'state:      open\n' > "$S/lid/state"
 arm update --lid
+
+echo "== the doctor's shipped apps"
+L=$XDG_STATE_HOME/ryoku/provisioned
+mkdir -p "${L%/*}"; printf '%s\n' kitty mangohud > "$L"       # mangohud: the doctor's own record
+printf '%s\n' ryomotion mangohud > "$FAKE_DIR/unavailable"
+arm debug step doctor-apps
+check "doctor-apps exits 0" test "$RC" -eq 0
+check "unavailable app declined (ryomotion)" grep -qx ryomotion "$L"
+check "x86-only release declined (ryotunes)" grep -qx ryotunes "$L"
+check "Asahi-pointless app declined (gamescope)" grep -qx gamescope "$L"
+check "installable app left to the doctor (songrec)" bash -c "! grep -qx songrec '$L'"
+check "existing ledger kept (kitty)" grep -qx kitty "$L"
+check "no duplicate for the doctor's own record" test "$(grep -cx mangohud "$L")" -eq 1
+sum=$(sha256sum < "$L"); arm debug step doctor-apps
+check "second run leaves the ledger alone" test "$(sha256sum < "$L")" == "$sum"
+# ryomotion & mangohud reach your repos (still not installed)
+: > "$FAKE_DIR/unavailable"; printf '%s\n' ryomotion mangohud > "$FAKE_DIR/missing"
+arm debug step doctor-apps
+check "now-installable app handed back (ryomotion)" bash -c "! grep -qx ryomotion '$L'"
+check "the doctor's own record stays (mangohud)" grep -qx mangohud "$L"
+check "listed declines stay (ryotunes)" grep -qx ryotunes "$L"
+: > "$FAKE_DIR/missing"
 
 echo "== Keep awake in the patched clamshell"
 K=$S/ka; mkdir -p "$K/run" "$K/ps/AC" "$K/drm" "$K/bin"

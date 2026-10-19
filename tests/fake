@@ -6,11 +6,12 @@
 # (cp, sed, systemctl on /etc) is logged and skipped.
 #
 # State (files under $FAKE_DIR):
-#   missing     package names pacman reports as not installed
+#   missing     package names not installed, but in your repos
+#   unavailable package names not installed and not in your repos
 #   versions    "name version" lines recorded by pacman -U
 name=${0##*/}
 printf '%s %s\n' "$name" "$*" >> "$FAKE_LOG"
-in_missing() { [[ -f $FAKE_DIR/missing ]] && grep -qxF -- "$1" "$FAKE_DIR/missing"; }
+in_missing() { cat "$FAKE_DIR/missing" "$FAKE_DIR/unavailable" 2>/dev/null | grep -qxF -- "$1"; }
 version_of() { awk -v p="$1" '$1 == p {v = $2} END {print (v == "" ? "0-0" : v)}' "$FAKE_DIR/versions" 2>/dev/null || echo 0-0; }
 
 case $name in
