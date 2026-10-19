@@ -49,7 +49,7 @@ ryoku-arm apps [--install]  # Ryoku's preinstalled apps your repos carry (Chromi
 ryoku-arm aur [--install]   # Ryoku's AUR set that builds on arm64 (Zen, LocalSend, voxtype, ...)
 ryoku-arm seed              # LazyVim, Starship, Yazi, wallpapers: what a checkout deploy misses
 ryoku-arm asahi-fixes       # upstream Asahi fixes not yet released (see below)
-ryoku-arm lid               # make closing the lid suspend (see Lid switch below)
+ryoku-arm lid               # make closing the lid suspend, unless Keep awake is on (see Lid switch)
 ryoku-arm snapshots         # snapper snapshots of /
 ryoku-arm rollback 3        # preview making snapshot 3 the root; add --apply to do it
 ryoku-arm self-update       # refresh these scripts
@@ -117,6 +117,32 @@ lid` removes the block.
 Hyprland reloads when `user.lua` changes, and a reload re-reads the lid. With
 the lid shut and no dock, that would suspend the machine right away (and drop
 an SSH session), so the step skips with a warning until the lid is open.
+
+### Keep awake holds a lid close awake
+
+Ryoku's Keep awake toggle (the bar button and the quick-settings tile, both
+`ryoku-cmd-caffeine`) holds a systemd `idle:sleep` inhibitor. That stops idle
+timers but not the lid: logind ignores a user's own inhibitors when that same
+user asks to suspend, and the lid policy (`ryoku-clamshell` -> `ryoku-shell
+suspend` -> login1 `Suspend`) runs as you, so a close slept anyway.
+
+`ryoku-arm lid` also patches the deployed `~/.local/bin/ryoku-clamshell`
+(`clamshell/keep-awake.sh.frag`, inserted inline between `ryoku-aarch64
+keep-awake` markers, since the script has no hook). While Keep awake is on, a
+non-docked lid close locks the session and turns the display off instead of
+suspending; opening the lid turns it back on. It covers every lid-driven
+suspend: the close itself, the lid re-check when Hyprland starts or reloads,
+and the daemon's suspend when a docked, closed laptop loses its dock. With Keep
+awake off, nothing changes. Docked behaviour is untouched.
+
+Each update re-lays the script, so `ryoku-arm update` re-applies it. Lid events
+use the new file at once; the clamshell daemon is restarted only while the lid
+is open (a restart briefly hands the lid back to logind, which would suspend a
+closed laptop). If Ryoku reshapes the script, the step is skipped with a
+warning. `RYOKU_ARM_KEEPAWAKE=0 ryoku-arm lid` removes it.
+
+Turning Keep awake off while the lid is shut doesn't suspend right away; the
+idle timers take over from there.
 
 ## Ryoku's apps
 

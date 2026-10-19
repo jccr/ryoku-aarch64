@@ -23,7 +23,8 @@
 #   ryoku-arm asahi-fixes         apply upstream Asahi fixes not yet released
 #                                 (asahi-audio: mic MONO position, ab1b469)
 #   ryoku-arm lid                 bind this laptop's lid switch (Apple SMC) to
-#                                 Ryoku's clamshell policy in hypr/user.lua
+#                                 Ryoku's clamshell policy in hypr/user.lua, and
+#                                 keep a lid close awake while Keep awake is on
 #   ryoku-arm snapshots           snapper snapshots of /
 #   ryoku-arm rollback [N] [--apply]   make snapshot N the root again
 #   ryoku-arm self-update         refresh these scripts from jccr/ryoku-aarch64
@@ -497,7 +498,7 @@ lid_block() { # names on stdin -> the user.lua block
   echo "$lid_end"
 }
 
-cmd_lid() {
+lid_binds() {
   local f=${XDG_CONFIG_HOME:-$HOME/.config}/hypr/user.lua names want have tmp
   names=$(lid_switch_names)
   [[ -f $f ]] && have=$(sed -n "/^$lid_begin/,/^$lid_end\$/p" "$f") || have=''
@@ -522,6 +523,63 @@ cmd_lid() {
   { cat "$tmp"; [[ -s $tmp && -n $(tail -c1 "$tmp") ]] && echo; echo; echo "$want"; } > "$tmp.new"
   cat "$tmp.new" > "$f"; rm -f "$tmp" "$tmp.new"
   say "bound the lid switch ($(paste -sd, <<< "$names")) in ${f/#"$HOME"/\~}"
+}
+
+# Keep awake vs the lid. Ryoku's Keep awake toggle (bar and quick settings,
+# ryoku-cmd-caffeine) holds a systemd idle:sleep inhibitor, but logind skips a
+# user's own inhibitors when that same user asks to suspend, and the lid policy
+# (ryoku-clamshell -> ryoku-shell suspend -> login1 Suspend) runs as you. So a
+# lid close slept even with Keep awake on. ryoku-clamshell has no hook, so this
+# inserts clamshell/keep-awake.sh.frag inline into the deployed copy, plus one
+# hook line at the top of suspend_while_closed (every lid-driven suspend: the
+# close edge, the startup/reload sync, and the daemon's undock-while-shut path)
+# and one in cancel_current_suspend (both open paths). deploy.sh re-lays the
+# script on every update, so ryoku-arm update re-applies it.
+ka_mark='ryoku-aarch64 keep-awake'
+
+strip_keep_awake() { # file
+  sed -i -e "/# $ka_mark begin/,/# $ka_mark end/d" -e "/# $ka_mark\$/d" "$1"
+}
+
+clamshell_keep_awake() {
+  local f=${RYOKU_ARM_CLAMSHELL:-$HOME/.local/bin/ryoku-clamshell} frag="$home_share/clamshell/keep-awake.sh.frag" tmp
+  [[ -f $f ]] || return 0
+  "$f" is-laptop >/dev/null 2>&1 || return 0
+  tmp=$(mktemp "${f%/*}/.ryoku-clamshell.XXXXXX")
+  cp -p "$f" "$tmp"; strip_keep_awake "$tmp"
+  if [[ ${RYOKU_ARM_KEEPAWAKE:-1} != 0 ]]; then
+    [[ -f $frag ]] || { warn "keep-awake fragment missing (ryoku-arm self-update)"; rm -f "$tmp"; return 0; }
+    if ! grep -q '^suspend_while_closed() {$' "$tmp" || ! grep -q '^cancel_current_suspend() {$' "$tmp"; then
+      warn "ryoku-clamshell changed upstream (no suspend_while_closed/cancel_current_suspend); Keep awake lid fix skipped"
+      rm -f "$tmp"; return 0
+    fi
+    awk -v frag="$frag" -v m="# $ka_mark" '
+      /^suspend_while_closed\(\) \{$/ {
+        while ((getline l < frag) > 0) print l; close(frag)
+        print; print "  if keep_awake_on; then keep_awake_close; return 0; fi  " m; next }
+      /^cancel_current_suspend\(\) \{$/ { print; print "  keep_awake_open  " m; next }
+      { print }' "$tmp" > "$tmp.new" && cat "$tmp.new" > "$tmp"; rm -f "$tmp.new"
+    bash -n "$tmp" || { warn "patched ryoku-clamshell failed bash -n; left it unchanged"; rm -f "$tmp"; return 0; }
+  fi
+  if cmp -s "$tmp" "$f"; then rm -f "$tmp"; return 0; fi
+  # rename, never rewrite in place: the running daemon is reading this script
+  mv -f "$tmp" "$f"
+  if [[ ${RYOKU_ARM_KEEPAWAKE:-1} != 0 ]]; then say "ryoku-clamshell: Keep awake now holds a lid close awake (lock + display off)"
+  else say "ryoku-clamshell: removed the Keep awake lid change"; fi
+  # Lid edges run the new file at once. The daemon (undock-while-shut path)
+  # needs a restart, which briefly hands the lid back to logind: only when open.
+  if systemctl --user is-active --quiet ryoku-clamshell.service 2>/dev/null; then
+    if [[ $("$f" status 2>/dev/null | sed -n 's/^lid=//p') == open ]]; then
+      systemctl --user restart ryoku-clamshell.service && say "restarted the clamshell daemon"
+    else
+      warn "lid is closed: the clamshell daemon picks this up at its next restart (login, or ryoku-arm lid with the lid open)"
+    fi
+  fi
+}
+
+cmd_lid() {
+  lid_binds
+  clamshell_keep_awake
 }
 
 # asahi-audio <= v5.0 labels each Mac's processed mic output "AUX0". Quickshell's
@@ -612,6 +670,6 @@ case ${1:-} in
   rollback)    shift; exec "$home_share/snapshot-rollback.sh" "$@" ;;
   self-update) cmd_self_update ;;
   reinstall)   shift; exec "$home_share/ryoku-aarch64.sh" "$@" ;;
-  ""|-h|--help|help)  sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//' ;;
+  ""|-h|--help|help)  sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command: $1 (try ryoku-arm help)" ;;
 esac
