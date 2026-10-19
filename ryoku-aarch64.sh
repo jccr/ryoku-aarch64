@@ -398,6 +398,9 @@ fi
 if ((is_asahi)); then
   run "$share/ryoku-arm" asahi-fixes || warn "asahi-fixes failed (retry: ryoku-arm asahi-fixes)"
 fi
+# Ryoku binds only an ACPI "Lid Switch"; bind this laptop's real lid switch
+# (Apple SMC on Asahi) to the same clamshell policy, or closing it does nothing
+run "$share/ryoku-arm" lid || warn "lid binds failed (retry: ryoku-arm lid)"
 
 if ((sddm)); then
   say "done. Reboot; log in at the Ryoku login screen (session: Hyprland)."

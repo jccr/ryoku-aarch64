@@ -22,6 +22,8 @@
 #                                 session units (ryogami, ryoku-idle, ...)
 #   ryoku-arm asahi-fixes         apply upstream Asahi fixes not yet released
 #                                 (asahi-audio: mic MONO position, ab1b469)
+#   ryoku-arm lid                 bind this laptop's lid switch (Apple SMC) to
+#                                 Ryoku's clamshell policy in hypr/user.lua
 #   ryoku-arm snapshots           snapper snapshots of /
 #   ryoku-arm rollback [N] [--apply]   make snapshot N the root again
 #   ryoku-arm self-update         refresh these scripts from jccr/ryoku-aarch64
@@ -456,6 +458,72 @@ cmd_plugins() {
   fi
 }
 
+# Lid switch. Hyprland's switch binds match an input device by NAME, and Ryoku's
+# modules/lid.lua binds only "Lid Switch" (the ACPI lid button x86 laptops have).
+# Apple Silicon's lid is the SMC input "Apple SMC power/lid events", so a close
+# never reached ryoku-clamshell; meanwhile its daemon holds logind's
+# handle-lid-switch inhibitor, so logind didn't act either: the panel stayed
+# lit and nothing suspended. This binds every SW_LID device under its real name
+# to the same clamshell commands, in a marked block of ~/.config/hypr/user.lua
+# (user-owned, loaded last, never touched by a deploy). Laid once; re-running
+# rewrites the block only when the names change.
+lid_begin='-- ryoku-aarch64 lid begin'
+lid_end='-- ryoku-aarch64 lid end'
+
+lid_switch_names() { # input devices whose SW bitmap has SW_LID (bit 0), minus Ryoku's own
+  local line name='' w
+  while IFS= read -r line; do
+    case $line in
+      'N: Name='*) name=${line#'N: Name="'}; name=${name%'"'} ;;
+      'B: SW='*)
+        w=${line##* }; w=${w#SW=}
+        [[ $w =~ ^[0-9a-fA-F]+$ ]] && (( 16#$w & 1 )) && [[ -n $name && $name != 'Lid Switch' ]] \
+          && printf '%s\n' "$name"
+        true ;;
+      '') name='' ;;
+    esac
+  done < "${RYOKU_ARM_INPUT_DEVICES:-/proc/bus/input/devices}" | sort -u
+}
+
+lid_block() { # names on stdin -> the user.lua block
+  local n q
+  echo "$lid_begin (ryoku-arm lid: this machine's lid switch, which Ryoku's"
+  echo "-- modules/lid.lua misses: it binds only \"Lid Switch\". Same clamshell policy.)"
+  while IFS= read -r n; do
+    q=${n//\\/\\\\}; q=${q//\"/\\\"}
+    printf 'hl.bind("switch:on:%s",  hl.dsp.exec_cmd("command -v ryoku-clamshell >/dev/null 2>&1 && ryoku-clamshell lid close"), { locked = true })\n' "$q"
+    printf 'hl.bind("switch:off:%s", hl.dsp.exec_cmd("command -v ryoku-clamshell >/dev/null 2>&1 && ryoku-clamshell lid open"),  { locked = true })\n' "$q"
+  done
+  echo "$lid_end"
+}
+
+cmd_lid() {
+  local f=${XDG_CONFIG_HOME:-$HOME/.config}/hypr/user.lua names want have tmp
+  names=$(lid_switch_names)
+  [[ -f $f ]] && have=$(sed -n "/^$lid_begin/,/^$lid_end\$/p" "$f") || have=''
+  if [[ -z $names || ${RYOKU_ARM_LID:-1} == 0 ]]; then
+    [[ -n $have ]] || return 0
+    sed -i "/^$lid_begin/,/^$lid_end\$/d" "$f"
+    say "removed the lid-switch binds from ${f/#"$HOME"/\~}"
+    return 0
+  fi
+  want=$(lid_block <<< "$names")
+  [[ $have == "$want" ]] && return 0
+  # Hyprland reloads on the edit and a reload re-reads the lid: with it shut and
+  # no dock, that suspends the machine mid-run (and drops an SSH session).
+  if [[ $(ryoku-clamshell status 2>/dev/null | sed -n 's/^clamshell=//p') != active \
+        && $(ryoku-clamshell status 2>/dev/null | sed -n 's/^lid=//p') == closed ]]; then
+    warn "lid is closed: skipped the lid-switch binds (the reload would suspend now); open it and run: ryoku-arm lid"
+    return 0
+  fi
+  mkdir -p "${f%/*}"; touch "$f"
+  tmp=$(mktemp)
+  sed "/^$lid_begin/,/^$lid_end\$/d" "$f" > "$tmp"
+  { cat "$tmp"; [[ -s $tmp && -n $(tail -c1 "$tmp") ]] && echo; echo; echo "$want"; } > "$tmp.new"
+  cat "$tmp.new" > "$f"; rm -f "$tmp" "$tmp.new"
+  say "bound the lid switch ($(paste -sd, <<< "$names")) in ${f/#"$HOME"/\~}"
+}
+
 # asahi-audio <= v5.0 labels each Mac's processed mic output "AUX0". Quickshell's
 # level meter (the quick-settings mic row) can't map AUX0 to its stereo capture
 # stream and drops every buffer with "pipewire.peak ... missing channels",
@@ -494,6 +562,7 @@ cmd_update() {
   # lay the configs a checkout deploy never does (LazyVim, starship, yazi, ...)
   cmd_plugins
   cmd_seed
+  cmd_lid
   return "$rc"
 }
 
@@ -535,6 +604,7 @@ case ${1:-} in
   status)      cmd_status ;;
   plugins)     cmd_plugins ;;
   asahi-fixes) cmd_asahi_fixes ;;
+  lid)         cmd_lid ;;
   apps)        shift; cmd_apps "$@" ;;
   seed)        cmd_seed ;;
   aur)         shift; cmd_aur "$@" ;;
@@ -542,6 +612,6 @@ case ${1:-} in
   rollback)    shift; exec "$home_share/snapshot-rollback.sh" "$@" ;;
   self-update) cmd_self_update ;;
   reinstall)   shift; exec "$home_share/ryoku-aarch64.sh" "$@" ;;
-  ""|-h|--help|help) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//' ;;
+  ""|-h|--help|help)  sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command: $1 (try ryoku-arm help)" ;;
 esac

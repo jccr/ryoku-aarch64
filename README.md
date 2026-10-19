@@ -49,6 +49,7 @@ ryoku-arm apps [--install]  # Ryoku's preinstalled apps your repos carry (Chromi
 ryoku-arm aur [--install]   # Ryoku's AUR set that builds on arm64 (Zen, LocalSend, voxtype, ...)
 ryoku-arm seed              # LazyVim, Starship, Yazi, wallpapers: what a checkout deploy misses
 ryoku-arm asahi-fixes       # upstream Asahi fixes not yet released (see below)
+ryoku-arm lid               # make closing the lid suspend (see Lid switch below)
 ryoku-arm snapshots         # snapper snapshots of /
 ryoku-arm rollback 3        # preview making snapshot 3 the root; add --apply to do it
 ryoku-arm self-update       # refresh these scripts
@@ -94,6 +95,28 @@ change, so a fixed package overwrites it with identical content.
   level meter can't map, so the quick-settings mic row floods the shell log with
   `pipewire.peak ... missing channels`. The fix relabels it `MONO`. Restarts
   PipeWire once when it changes something.
+
+## Lid switch
+
+On a MacBook, closing the lid did nothing: the panel stayed on and the machine
+never slept. Hyprland matches switch binds by device name, and Ryoku's
+`modules/lid.lua` binds only `Lid Switch` (the ACPI lid button on x86 laptops).
+On Asahi the lid is the SMC input `Apple SMC power/lid events`, so the close
+never reached `ryoku-clamshell`, and since its daemon holds logind's
+`handle-lid-switch` inhibitor, logind didn't suspend either.
+
+`ryoku-arm lid` (run by the installer and `ryoku-arm update`) finds every input
+device that reports a lid switch (`SW_LID` in `/proc/bus/input/devices`) under
+another name and binds it to the same `ryoku-clamshell lid close` / `lid open`
+commands, in a marked block at the end of `~/.config/hypr/user.lua`. That file
+is yours and deploys never touch it, so the block is written once and only
+rewritten if the names change. The policy is Ryoku's own: lock and suspend, or
+hand off to an external display when docked on AC. `RYOKU_ARM_LID=0 ryoku-arm
+lid` removes the block.
+
+Hyprland reloads when `user.lua` changes, and a reload re-reads the lid. With
+the lid shut and no dock, that would suspend the machine right away (and drop
+an SSH session), so the step skips with a warning until the lid is open.
 
 ## Ryoku's apps
 
