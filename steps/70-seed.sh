@@ -2,7 +2,8 @@
 step seed optional "lay what a checkout deploy misses; enable Ryoku's session units"
 
 # What a packaged Ryoku box gets that a checkout's deploy.sh never lays: the
-# ryoku-desktop PKGBUILD stages nvim (LazyVim), starship.toml and yazi.toml for
+# ryoku-desktop PKGBUILD stages nvim (LazyVim), starship.toml, yazi.toml and the
+# fastfetch emblem for
 # `ryoku materialize`, and ryoku-shell-installer seeds wallpapers, ~/.npmrc and
 # a few .desktop entries. Ryoku-owned files are refreshed only while they still
 # match what was laid last time (a sha in the state dir), so a file you edited
@@ -85,6 +86,8 @@ step_seed() {
   seed_nvim "$r"
   lay_owned "$r/apps/starship/starship.toml" "$CFG/starship.toml"
   lay_owned "$r/apps/yazi/yazi.toml" "$CFG/yazi/yazi.toml"
+  # the readout's emblem: without it fastfetch silently draws the Arch logo
+  lay_owned "$r/assets/brand/fastfetch-emblem.png" "$CFG/fastfetch/fastfetch-emblem.png"
   # launcher entries the package ships system-wide
   lay_owned "$r/apps/nvim/ryoku-nvim.desktop" "$apps/ryoku-nvim.desktop"
   lay_owned "$r/apps/tools/compress-video.desktop" "$apps/compress-video.desktop"

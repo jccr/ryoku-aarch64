@@ -1,0 +1,7 @@
+# Ryoku packages whose PKGBUILD says arch=('x86_64') only because Ryoku ships
+# x86_64, but which build from source on aarch64 unchanged. Built with
+# `makepkg --ignorearch`; the result is a native aarch64 package.
+
+# Go + cgo build from a pinned commit (no x86 binaries, no x86 flags). Ryoku
+# Rashin's code index and agent skills need it (the doctor's "prowl for rashin").
+prowl-agent

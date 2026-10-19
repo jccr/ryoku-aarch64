@@ -29,7 +29,7 @@ case $name in
       -U)
         for f; do
           [[ $f == *.pkg.tar.* ]] || continue
-          b=${f##*/}; b=${b%-any.pkg.tar.*}       # name-ver-rel
+          b=${f##*/}; b=${b%.pkg.tar.*}; b=${b%-*}  # name-ver-rel (arch dropped)
           rel=${b##*-}; b=${b%-*}; ver=${b##*-}; pkg=${b%-*}
           echo "$pkg $ver-$rel" >> "$FAKE_DIR/versions"
         done ;;
@@ -38,7 +38,8 @@ case $name in
   makepkg)
     # "build" the PKGBUILD in the cwd into an empty package file
     # shellcheck source=/dev/null
-    ( source ./PKGBUILD >/dev/null 2>&1; touch "${pkgname[0]}-$pkgver-$pkgrel-any.pkg.tar.zst" )
+    arch=any; [[ " $* " == *" --ignorearch "* ]] && arch=aarch64
+    ( source ./PKGBUILD >/dev/null 2>&1; touch "${pkgname[0]}-$pkgver-$pkgrel-$arch.pkg.tar.zst" )
     exit 0 ;;
   systemctl)
     # no live user session: nothing is active; every unit is enabled

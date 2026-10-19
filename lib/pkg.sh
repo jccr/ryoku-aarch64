@@ -40,10 +40,12 @@ install_missing() { # label names...
   run sudo pacman -Syu --needed --noconfirm "${missing[@]}"
 }
 
-# Build one of Ryoku's arch=any packages from its PKGBUILD on origin/<channel>
-# when it is missing or its version moved.
-build_any() { # pkg
-  local p=$1 want have work log deps=()
+# Build one of Ryoku's packages from its PKGBUILD on origin/<channel> when it
+# is missing or its version moved. --ignorearch for an x86_64-labelled
+# PKGBUILD that builds from source on aarch64 (packages/ryoku-ported).
+build_any() { # pkg [--ignorearch]
+  local p=$1 mkflags=(-cf --noconfirm) want have work log deps=()
+  [[ ${2:-} == --ignorearch ]] && mkflags+=(--ignorearch)
   want="$(pkgbuild_field "$p" pkgver | head -1)-$(pkgbuild_field "$p" pkgrel | head -1)"
   [[ $want != - ]] || { warn "$p: no PKGBUILD on origin/$CHANNEL"; return 0; }
   # pacman -Q fails for a package not installed yet: keep set -e out of it
@@ -52,6 +54,9 @@ build_any() { # pkg
   say "building $p $want${have:+ (installed $have)}"
   dry && { echo "  DRY: makepkg $p, then sudo pacman -U"; return 0; }
   work="$CACHE/pkgs"; log="$work/$p.log"
+  # Go marks its module cache read-only (prowl-agent), which defeats both
+  # makepkg -c and a plain rm -rf of the previous build
+  [[ -d $work/$p ]] && chmod -R u+w "$work/$p"
   rm -rf "${work:?}/$p"; mkdir -p "$work"
   git -C "$(repo)" archive "origin/$CHANNEL" "release/packages/$p" | tar -x -C "$work" \
     && mv "$work/release/packages/$p" "$work/$p" && rm -rf "$work/release"
@@ -60,7 +65,7 @@ build_any() { # pkg
   if ((${#deps[@]})) && ! sudo pacman -S --needed --noconfirm --asdeps "${deps[@]}" >"$log" 2>&1; then
     warn "$p: build deps failed; see $log"; return 0
   fi
-  if ( cd "$work/$p" && makepkg -cf --noconfirm ) >>"$log" 2>&1; then
+  if ( cd "$work/$p" && makepkg "${mkflags[@]}" ) >>"$log" 2>&1; then
     # shellcheck disable=SC2024
     sudo pacman -U --noconfirm "$work/$p"/*.pkg.tar.* >>"$log" 2>&1 || warn "$p did not install; see $log"
   else

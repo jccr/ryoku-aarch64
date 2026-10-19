@@ -39,7 +39,7 @@ this repo and restarts itself, so new steps apply in the same run.
 | pacman-repo | pacman's `[ryoku]` points at an empty local repo (see below) |
 | source | the Ryoku checkout (`~/src/ryoku`) exists, on a real `main` branch, fetched |
 | deps | everything Ryoku's desktop PKGBUILDs need, plus `packages/session.packages` |
-| ryoku-any | Ryoku's arch=any packages (cursors, UI fonts, gpk) at their PKGBUILD versions |
+| ryoku-any | Ryoku's arch=any packages (cursors, UI fonts, gpk) and source-portable ones (prowl-agent) at their PKGBUILD versions |
 | doctor-apps | Ryoku's doctor doesn't try shipped apps that can't run here |
 | desktop | the desktop is deployed: `deploy.sh` the first time, `ryoku update` after |
 | asahi-desktop | `asahi-desktop-meta` on Asahi (speaker safety, asahi-audio, Vulkan) |
@@ -89,7 +89,8 @@ ryoku-aarch64.sh   bootstrap (the one file you curl)
 ryoku-arm          the CLI: argument parsing and dispatch only
 lib/               shared helpers: log, env, choices, upstream, pkg, blocks, steps
 steps/NN-name.sh   one step per file; NN is the run order
-packages/          package lists (data): session, ryoku-any, desktop-pkgbuilds
+packages/          package lists (data): session, ryoku-any, ryoku-ported,
+                   desktop-pkgbuilds, doctor-declined
 fragments/         text inserted into Ryoku's files (marker-delimited)
 plugins/           bundled Ryoku shell plugins
 tests/run.sh       the test suite (sandboxed; fake sudo, never touches the system)
@@ -132,6 +133,14 @@ the session runs that no PKGBUILD names (fish, kitty, the terminal tools the
 shell configs call, the TTY font). Installs go through `pacman -Syu --needed`,
 never a partial upgrade.
 
+### ryoku-any
+Ryoku's arch=any packages (cursors, UI fonts, oh-my-zsh, blesh, udev rules,
+gpk) build on aarch64 from Ryoku's own PKGBUILDs. Some PKGBUILDs say
+`arch=('x86_64')` only because Ryoku ships x86_64, yet build from source
+unchanged: `packages/ryoku-ported.packages` lists those (prowl-agent, which
+Ryoku Rashin's code index needs), built with `makepkg --ignorearch` into a
+native aarch64 package. Each is rebuilt when its PKGBUILD version moves.
+
 ### doctor-apps
 On every `ryoku update`, Ryoku's doctor installs its "shipped apps" (the
 `Apps()` list in ryoku-cli's `internal/ryokumanifest`, plus ryotunes) in one
@@ -159,7 +168,8 @@ to re-arm the doctor for it.
 
 ### seed
 Ryoku's `deploy.sh` doesn't lay everything a packaged install gets: the
-`ryoku-desktop` package stages LazyVim, `starship.toml` and `yazi.toml`, and
+`ryoku-desktop` package stages LazyVim, `starship.toml`, `yazi.toml` and the
+fastfetch emblem (without it the login readout silently shows the Arch logo), and
 Ryoku's installer seeds wallpapers, `~/.npmrc` and a few launcher entries.
 Ryoku-owned files are refreshed only while they still match what was laid last
 time, so your edits are kept; LazyVim goes only into an empty `~/.config/nvim`
