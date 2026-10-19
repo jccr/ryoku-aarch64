@@ -98,7 +98,7 @@ choices_infer() {
   systemctl is-enabled --quiet sddm.service 2>/dev/null || CHOICE[sddm]=0
   pacman -Qq asahi-desktop-meta >/dev/null 2>&1 || CHOICE[asahi_desktop]=0
   ryoku plugin list --json 2>/dev/null | grep -q '"keyboard-backlight"' || CHOICE[kbd_light]=0
-  pacman -Qq chromium firefox >/dev/null 2>&1 || CHOICE[apps]=0
+  { pacman -Qq chromium || pacman -Qq firefox; } >/dev/null 2>&1 || CHOICE[apps]=0
   command -v yay >/dev/null 2>&1 || CHOICE[aur]=0
   say "no saved choices yet; read these off this machine (saved to $(tilde "$CHOICES_FILE")):"
   choices_print
